@@ -1,6 +1,6 @@
 id = "nhclink16.announcer"
 name = "Announcer"
-version = "0.3.1"
+version = "0.4.0"
 min_herdr_version = "0.7.0"
 description = "Speaks a short summary when an agent finishes or needs input - local TTS, ElevenLabs, or any custom command"
 platforms = ["macos", "linux"]
@@ -14,3 +14,17 @@ id = "test"
 title = "Test announcer voice"
 contexts = ["workspace"]
 command = ["python3", "announce.py", "--test"]
+
+[[actions]]
+id = "status"
+title = "Announcer status"
+contexts = ["workspace"]
+command = ["python3", "announce.py", "status"]
+
+[[panes]]
+id = "setup"
+title = "Announcer setup"
+placement = "popup"
+width = "70%"
+height = "80%"
+command = ["python3", "announce.py", "setup"]
