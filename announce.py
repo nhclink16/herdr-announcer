@@ -438,6 +438,11 @@ def codex_summary(
         str(config["codex_model"]),
         "-c",
         "model_reasoning_effort={}".format(config["codex_effort"]),
+        # The transcript is untrusted agent output; never let a prompt-injected
+        # transcript run tools, and don't persist these throwaway sessions.
+        "--sandbox",
+        "read-only",
+        "--ephemeral",
         "--skip-git-repo-check",
         prompt,
     ]
@@ -508,6 +513,26 @@ def make_announcement(
         elif mode == "command":
             generated = command_summary(config, name, workspace, status, transcript)
     return generated or template_summary(name, workspace, status)
+
+
+def check_and_record_debounce(
+    state_dir: Path, pane_id: str, status: str, seconds: int
+) -> bool:
+    """Atomically check and record the announcement, so two hooks racing on
+    the same event can't both pass the debounce window."""
+    import fcntl
+
+    with (state_dir / "debounce.lock").open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            now = time.time()
+            state = load_debounce_state(state_dir / "last.json")
+            if is_debounced(state, pane_id, status, now, seconds):
+                return True
+            save_debounce_state(state_dir, state, pane_id, status, now)
+            return False
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 @contextmanager
@@ -700,22 +725,16 @@ def process_invocation(
     debounce_value = config.get("debounce_seconds")
     if isinstance(debounce_value, bool) or not isinstance(debounce_value, int):
         raise ValueError("debounce_seconds must be an integer")
-    now = time.time()
-    debounce_path = state_dir / "last.json"
-    debounce_state = load_debounce_state(debounce_path)
-    if is_debounced(debounce_state, pane_id, status, now, debounce_value):
+    if check_and_record_debounce(state_dir, pane_id, status, debounce_value):
         return "debounced"
 
     name, workspace = get_context(herdr_bin, pane_id)
     transcript = get_transcript(herdr_bin, pane_id)
-    announcement = make_announcement(
-        config, name, workspace, status, transcript
+    announcement = _sanitize_summary(
+        make_announcement(config, name, workspace, status, transcript)
     )
     if config.get("toast"):
         show_toast(herdr_bin, announcement)
-    save_debounce_state(
-        state_dir, debounce_state, pane_id, status, time.time()
-    )
     backend = speak(config, announcement, state_dir)
     return "announced+{}".format(backend)
 

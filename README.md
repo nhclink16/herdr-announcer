@@ -31,11 +31,11 @@ lock around playback, so they queue and speak one at a time.
 herdr plugin install nhclink16/herdr-announcer
 ```
 
-## Configure (optional — works with zero config)
+## Configure (optional — zero config on macOS; Linux needs `spd-say` or `espeak` for the default voice)
 
 ```bash
-herdr plugin config-dir nhclink16.announcer   # prints the config directory
-cp config.example.toml <that-dir>/config.toml
+curl -fsSL -o "$(herdr plugin config-dir nhclink16.announcer)/config.toml" \
+  https://raw.githubusercontent.com/nhclink16/herdr-announcer/master/config.example.toml
 ```
 
 See [config.example.toml](config.example.toml) for every setting: which states
@@ -53,8 +53,12 @@ herdr plugin action invoke nhclink16.announcer.test
 - Herdr >= 0.7.0, macOS or Linux, Python 3.9+
 - Optional: [Codex CLI](https://github.com/openai/codex) for LLM summaries —
   or any other CLI LLM via `summary_command`
-- Optional: ElevenLabs API key for a natural voice
-- Linux local TTS uses `spd-say` or `espeak` if present
+- Optional: ElevenLabs API key for a natural voice (playback needs `afplay`,
+  `mpv`, or `ffplay`; without one it falls back to local TTS)
+- Linux local TTS needs `spd-say` or `espeak`
+- The ACP example additionally needs Node.js >= 22 with `npx`, network access,
+  and an existing Claude Code login; it fetches the latest
+  `@agentclientprotocol/claude-agent-acp` (unpinned) on first run
 
 ## Attached over SSH?
 
