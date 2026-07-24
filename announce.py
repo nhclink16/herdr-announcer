@@ -773,16 +773,22 @@ def _load_raw_config(path: Path) -> Dict[str, Any]:
         return {}
 
 
-def _write_config(
-    path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
-) -> None:
+def _config_lines(
+    config: Dict[str, Any], explicitly_chosen: Sequence[str]
+) -> List[str]:
     chosen = set(explicitly_chosen)
-    keys = [
-        key
+    return [
+        "{} = {}".format(key, _toml_value(config[key]))
         for key in DEFAULTS
         if config.get(key) is not None
         and (key in chosen or config.get(key) != DEFAULTS[key])
     ]
+
+
+def _write_config(
+    path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
+) -> None:
+    lines = _config_lines(config, explicitly_chosen)
     # Carry unknown keys forward so future plugin versions' settings survive.
     extras = {
         key: value
@@ -803,8 +809,8 @@ def _write_config(
             delete=False,
         ) as handle:
             temporary_name = handle.name
-            for key in keys:
-                handle.write("{} = {}\n".format(key, _toml_value(config[key])))
+            for line in lines:
+                handle.write(line + "\n")
             for key, value in extras.items():
                 try:
                     handle.write("{} = {}\n".format(key, _toml_value(value)))
@@ -844,15 +850,22 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
     capabilities = _capabilities()
 
     print("herdr-announcer setup")
-    print("Config path: {}".format(config_path))
-    if existed:
-        print("Values in brackets are current; Enter keeps them.")
-    else:
-        print("Values in brackets are defaults; Enter keeps them.")
+    print("=" * 46)
+    print("Config: {}".format(config_path))
+    print("Enter keeps the value shown in [brackets]{}.".format(
+        " (your current setting)" if existed else " (the default)"
+    ))
+    print("Ctrl-C exits without writing anything.")
 
+    # 1 -- states
+    print()
+    print("1/6  When should it speak?")
+    print("     done    - an agent finished work you weren't watching")
+    print("     blocked - an agent is waiting on your approval or input")
+    print("     (working, idle, and unknown are also valid, but chatty)")
     while True:
         value, explicit = _prompt(
-            "Announce which states?",
+            "     states",
             ",".join(str(item) for item in config["announce"]),
         )
         states = [item.strip().lower() for item in value.split(",") if item.strip()]
@@ -862,49 +875,48 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
             if explicit:
                 chosen.append("announce")
             break
-        print("Use a comma list containing only: {}.".format(
-            ",".join(sorted(VALID_STATUSES))
+        print("     Use a comma-separated list from: {}.".format(
+            ", ".join(sorted(VALID_STATUSES))
         ))
 
-    print("Summary mode:")
-    summary_choices: Dict[str, str] = {}
+    # 2 -- summarizer
+    print()
+    print("2/6  Who writes the summary sentence?")
     has_custom_summary = bool(config.get("summary_command"))
+    options: List[Tuple[str, str]] = []
     if capabilities["codex"]:
-        summary_choices["1"] = "codex"
-        print("  1) codex (recommended)")
-    if has_custom_summary or capabilities["claude"]:
-        summary_choices["2"] = "command"
-        if has_custom_summary:
-            print("  2) command - keep current custom summarizer")
-        else:
-            print("  2) command - Claude Code")
-    summary_choices["3"] = "template"
-    print("  3) template - no LLM")
+        options.append(("codex", "Codex        one-sentence summary via codex exec"))
+    if has_custom_summary:
+        options.append(("command", "Custom       keep your current summary command"))
+    elif capabilities["claude"]:
+        options.append(("command", "Claude Code  one-sentence summary via claude -p"))
+    options.append(("template", 'None         instant "<agent> finished in <workspace>" phrasing'))
+    summary_choices: Dict[str, str] = {}
+    for index, (mode, label) in enumerate(options, 1):
+        summary_choices[str(index)] = mode
+        print("     {}) {}".format(index, label))
     current_summary = str(config.get("summary", ""))
     default_summary = next(
         (number for number, mode in summary_choices.items()
          if mode == current_summary),
-        "1" if "1" in summary_choices else
-        "2" if "2" in summary_choices else "3",
+        "1",
     )
     summary, explicit = _prompt_choice(
-        "Summary mode", summary_choices, default_summary
+        "     choice", summary_choices, default_summary
     )
     config["summary"] = summary
     if explicit:
         chosen.append("summary")
     if summary == "command":
-        # Never clobber an existing custom summarizer with the preset.
         if not has_custom_summary:
             config["summary_command"] = _claude_summary_command()
         chosen.append("summary_command")
-    # Other modes keep summary_command in the file so switching back is easy.
     if summary == "codex":
         model, model_explicit = _prompt(
-            "Codex model", str(config["codex_model"])
+            "     model", str(config["codex_model"])
         )
         effort, effort_explicit = _prompt(
-            "Codex effort", str(config["codex_effort"])
+            "     effort (low/medium/high)", str(config["codex_effort"])
         )
         config["codex_model"] = model
         config["codex_effort"] = effort
@@ -913,43 +925,55 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
         if effort_explicit:
             chosen.append("codex_effort")
 
-    print("Style:\n  1) announcement\n  2) summary\n  3) custom")
-    style_numbers = {"announcement": "1", "summary": "2", "custom": "3"}
-    style, explicit = _prompt_choice(
-        "Style",
-        {"1": "announcement", "2": "summary", "3": "custom"},
-        style_numbers.get(str(config["style"]), "1"),
-    )
-    config["style"] = style
-    if explicit:
-        chosen.append("style")
-    if style == "custom":
-        print("Available placeholders: {agent} {workspace} {status}")
-        while True:
-            prompt, prompt_explicit = _prompt(
-                "Prompt template", str(config["custom_prompt"])
-            )
-            if prompt:
-                config["custom_prompt"] = prompt
-                chosen.append("custom_prompt")
-                break
-            if not prompt_explicit:
-                print("No template given - keeping announcement style.")
-                config["style"] = "announcement"
-                break
-            print("Custom style needs a non-empty prompt template.")
+    # 3 -- style (only meaningful when an LLM writes the sentence)
+    if summary != "template":
+        print()
+        print("3/6  How should it sound?")
+        print('     1) announcement - "Builder finished the proration work and all tests passed."')
+        print("     2) factual      - plain report of what happened, no radio voice")
+        print("     3) custom       - write your own prompt")
+        style_numbers = {"announcement": "1", "summary": "2", "custom": "3"}
+        style, explicit = _prompt_choice(
+            "     choice",
+            {"1": "announcement", "2": "summary", "3": "custom"},
+            style_numbers.get(str(config["style"]), "1"),
+        )
+        config["style"] = style
+        if explicit:
+            chosen.append("style")
+        if style == "custom":
+            print("     Placeholders: {agent} {workspace} {status}; the agent's")
+            print("     terminal output is appended after your prompt.")
+            while True:
+                prompt, prompt_explicit = _prompt(
+                    "     prompt", str(config["custom_prompt"])
+                )
+                if prompt:
+                    config["custom_prompt"] = prompt
+                    chosen.append("custom_prompt")
+                    break
+                if not prompt_explicit:
+                    print("     No template given - keeping announcement style.")
+                    config["style"] = "announcement"
+                    break
+                print("     Custom style needs a non-empty prompt.")
+    else:
+        print()
+        print("3/6  How should it sound? (skipped - template phrasing is fixed)")
 
+    # 4 -- voice
+    print()
+    print("4/6  Where should the voice come out?")
     local_names = [
         name for name in ("say", "spd-say", "espeak") if capabilities[name]
     ]
-    detected = ", ".join(local_names) if local_names else "none detected"
-    print("Voice backend:")
-    print("  1) local TTS ({})".format(detected))
-    print("  2) ElevenLabs")
-    print("  3) custom command")
-    print("  4) keep current")
+    detected = ", ".join(local_names) if local_names else "nothing detected!"
+    print("     1) this machine    built-in text-to-speech ({})".format(detected))
+    print("     2) ElevenLabs      natural voice, needs an API key")
+    print("     3) custom command  route it anywhere: ssh, ntfy, a script")
+    print("     4) keep current")
     backend, backend_explicit = _prompt_choice(
-        "Voice backend",
+        "     choice",
         {"1": "local", "2": "elevenlabs", "3": "custom", "4": "keep"},
         "4" if existed else "1",
     )
@@ -960,7 +984,7 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
             chosen.extend(("speak_command", "elevenlabs_api_key"))
         if platform.system() == "Darwin":
             voice, voice_explicit = _prompt(
-                "Optional macOS voice name", str(config["voice"])
+                "     voice name (blank = system voice)", str(config["voice"])
             )
             config["voice"] = voice
             if voice_explicit:
@@ -968,16 +992,16 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
     elif backend == "elevenlabs":
         current_key = str(config["elevenlabs_api_key"])
         masked = current_key[:4] + "..." if current_key else ""
-        api_key, key_explicit = _prompt("ElevenLabs API key", masked)
+        api_key, key_explicit = _prompt("     API key", masked)
         if not key_explicit or api_key == masked:
             api_key = current_key
         if not api_key:
-            print("No key entered - ElevenLabs stays inactive; local TTS will be used.")
+            print("     No key entered - ElevenLabs stays inactive; local TTS will be used.")
         voice_id, voice_explicit = _prompt(
-            "ElevenLabs voice id", str(config["elevenlabs_voice_id"])
+            "     voice id", str(config["elevenlabs_voice_id"])
         )
         model, model_explicit = _prompt(
-            "ElevenLabs model", str(config["elevenlabs_model"])
+            "     model", str(config["elevenlabs_model"])
         )
         config["speak_command"] = None
         config["elevenlabs_api_key"] = api_key
@@ -991,15 +1015,16 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
         if key_explicit:
             chosen.append("elevenlabs_api_key")
     elif backend == "custom":
-        print("Include {text} in an argument, or text is sent on stdin.")
+        print("     One shell-style line; {text} is replaced with the announcement,")
+        print("     or with no {text} the announcement arrives on stdin.")
         current = config.get("speak_command")
         current_line = shlex.join(current) if isinstance(current, list) else ""
         while True:
-            line, line_explicit = _prompt("Full command argv", current_line)
+            line, line_explicit = _prompt("     command", current_line)
             try:
                 command = shlex.split(line)
             except ValueError as exc:
-                print("Invalid command: {}".format(exc))
+                print("     Invalid command: {}".format(exc))
                 continue
             if command:
                 config["speak_command"] = command
@@ -1007,31 +1032,55 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
                 chosen.extend(("speak_command", "elevenlabs_api_key"))
                 break
             if not line_explicit:
-                print("No command given - keeping current voice settings.")
+                print("     No command given - keeping current voice settings.")
                 break
-            print("Command must not be empty.")
+            print("     Command must not be empty.")
 
-    toast, explicit = _prompt_yes_no("Show toast?", bool(config["toast"]))
+    # 5 -- toast
+    print()
+    print("5/6  Also show each announcement as a Herdr notification?")
+    print("     (reaches you over SSH, where sound can't)")
+    toast, explicit = _prompt_yes_no("     toast", bool(config["toast"]))
     config["toast"] = toast
     if explicit:
         chosen.append("toast")
+
+    # 6 -- debounce
+    print()
+    print("6/6  Ignore repeat announcements within how many seconds?")
     while True:
         debounce, explicit = _prompt(
-            "Debounce seconds", str(config["debounce_seconds"])
+            "     seconds", str(config["debounce_seconds"])
         )
         try:
             debounce_value = int(debounce)
             if debounce_value < 0:
                 raise ValueError
         except ValueError:
-            print("Please enter a non-negative integer.")
+            print("     Please enter a non-negative integer.")
             continue
         config["debounce_seconds"] = debounce_value
         if explicit:
             chosen.append("debounce_seconds")
         break
 
+    # preview + confirm
+    preview = _config_lines(config, chosen)
+    print()
+    print("About to write {}:".format(config_path))
+    if preview:
+        for line in preview:
+            print("  " + line)
+    else:
+        print("  (empty file - everything matches the defaults)")
+    if existed:
+        print("Your current file will be kept as config.toml.bak.")
+    write_now, unused = _prompt_yes_no("Write it?", True)
+    if not write_now:
+        print("Nothing written.")
+        return 0
     _write_config(config_path, config, chosen)
+
     test_voice, unused = _prompt_yes_no("Test the voice now?", True)
     if test_voice:
         try:
@@ -1039,12 +1088,11 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
             backend_used = speak(
                 load_config(config_dir), "Announcer is configured", state_dir
             )
-            print("Voice test used: {}".format(backend_used))
+            print("Spoke via: {}".format(backend_used))
         except Exception as exc:
             print("Voice test failed: {}".format(exc))
-    print("Setup complete.")
-    print("Test later with: herdr plugin action invoke nhclink16.announcer.test")
-    print("See README.md for configuration details.")
+    print()
+    print("Done. Re-run this wizard anytime; your file is safe to hand-edit too.")
     return 0
 
 
@@ -1164,11 +1212,42 @@ def log_invocation(
                 handle.write("\n")
 
 
+PLUGIN_ID = "nhclink16.announcer"
+
+
+def _resolve_dirs_without_env() -> Tuple[Path, Path]:
+    """Locate plugin dirs when run from a plain terminal (no Herdr env)."""
+    config_dir = ""
+    try:
+        result = subprocess.run(
+            [os.environ.get("HERDR_BIN_PATH") or "herdr",
+             "plugin", "config-dir", PLUGIN_ID],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            config_dir = result.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if not config_dir:
+        config_dir = str(
+            Path.home() / ".config" / "herdr" / "plugins" / "config" / PLUGIN_ID
+        )
+    state_dir = Path.home() / ".local" / "state" / "herdr" / "plugins" / PLUGIN_ID
+    return Path(config_dir), state_dir
+
+
 def main() -> int:
     started = time.monotonic()
     test_mode = len(sys.argv) == 2 and sys.argv[1] == "--test"
     config_dir = Path(os.environ.get("HERDR_PLUGIN_CONFIG_DIR") or ".")
     state_dir = Path(os.environ.get("HERDR_PLUGIN_STATE_DIR") or ".")
+    if sys.argv[1:2] in (["setup"], ["status"]) and not os.environ.get(
+        "HERDR_PLUGIN_CONFIG_DIR"
+    ):
+        config_dir, state_dir = _resolve_dirs_without_env()
     if len(sys.argv) == 2 and sys.argv[1] == "status":
         try:
             return show_status(config_dir, state_dir)

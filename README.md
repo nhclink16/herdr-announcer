@@ -50,11 +50,20 @@ herdr plugin install nhclink16/herdr-announcer
 1. Install (above). The event hook is live immediately with defaults:
    announce `done` + `blocked`, Codex summaries if `codex` is on your PATH,
    local text-to-speech.
-2. Run the setup wizard in a popup to tailor it:
+2. Run the setup wizard to tailor it — either in a Herdr pane:
 
    ```bash
    herdr plugin pane open --plugin nhclink16.announcer --entrypoint setup
    ```
+
+   or in any plain terminal, from the plugin directory:
+
+   ```bash
+   python3 announce.py setup
+   ```
+
+   Ctrl-C exits without writing; the wizard previews the config and asks
+   before saving.
 
 3. Test the voice:
 

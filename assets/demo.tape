@@ -60,10 +60,16 @@ Sleep 600ms
 
 # Debounce: keep 30
 Enter
-Sleep 800ms
+Sleep 1s
+
+# Write it: yes
+Type "y"
+Sleep 300ms
+Enter
+Sleep 700ms
 
 # Voice test: no (silent demo)
 Type "n"
 Sleep 400ms
 Enter
-Sleep 2.5s
+Sleep 3s
