@@ -4,6 +4,7 @@
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -680,6 +681,340 @@ def speak(config: Dict[str, Any], text: str, state_dir: Path) -> str:
         return run_local_speech(config, text)
 
 
+def _capabilities() -> Dict[str, Optional[str]]:
+    return {
+        name: shutil.which(name)
+        for name in ("codex", "claude", "say", "spd-say", "espeak")
+    }
+
+
+def show_status(config_dir: Path, state_dir: Path) -> int:
+    config_path = config_dir / "config.toml"
+    config = load_config(config_dir)
+    capabilities = _capabilities()
+    print("herdr-announcer status")
+    print("config: {} ({})".format(
+        config_path, "exists" if config_path.exists() else "missing"
+    ))
+    print("values:")
+    for key in DEFAULTS:
+        value = config[key]
+        if key == "elevenlabs_api_key" and value:
+            value = str(value)[:4] + "..."
+        print("  {} = {}".format(key, json.dumps(value)))
+    print("capabilities:")
+    for name in ("codex", "claude", "say", "spd-say", "espeak"):
+        print("  {}: {}".format(name, "yes" if capabilities[name] else "no"))
+    log_path = state_dir / "announcer.log"
+    if log_path.exists():
+        print("log (last 8 lines):")
+        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+            lines = handle.readlines()[-8:]
+        for line in lines:
+            print("  " + line.rstrip("\n"))
+    else:
+        print("log: not found ({})".format(log_path))
+    return 0
+
+
+def _prompt(label: str, default: str) -> Tuple[str, bool]:
+    try:
+        value = input("{} [{}]: ".format(label, default))
+    except EOFError:
+        return default, False
+    value = value.strip()
+    return (value, True) if value else (default, False)
+
+
+def _prompt_choice(
+    label: str, choices: Dict[str, str], default: str
+) -> Tuple[str, bool]:
+    while True:
+        value, explicit = _prompt(label, default)
+        selected = choices.get(value.lower())
+        if selected is not None:
+            return selected, explicit
+        print("Please choose {}.".format(", ".join(choices)))
+
+
+def _prompt_yes_no(label: str, default: bool) -> Tuple[bool, bool]:
+    while True:
+        value, explicit = _prompt(label, "Y/n" if default else "y/N")
+        if not explicit:
+            return default, False
+        if value.lower() in ("y", "yes"):
+            return True, True
+        if value.lower() in ("n", "no"):
+            return False, True
+        print("Please enter yes or no.")
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return "[{}]".format(", ".join(json.dumps(item) for item in value))
+    raise ValueError("cannot write configuration value")
+
+
+def _write_config(
+    path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
+) -> None:
+    chosen = set(explicitly_chosen)
+    keys = [
+        key
+        for key in DEFAULTS
+        if config.get(key) is not None
+        and (key in chosen or config.get(key) != DEFAULTS[key])
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        shutil.copy2(str(path), str(path.with_name("config.toml.bak")))
+    with path.open("w", encoding="utf-8") as handle:
+        for key in keys:
+            handle.write("{} = {}\n".format(key, _toml_value(config[key])))
+
+
+def _claude_summary_command() -> List[str]:
+    return [
+        "claude",
+        "-p",
+        "--model",
+        "haiku",
+        (
+            "One spoken sentence, maximum 25 words, plain words only, no "
+            "markdown or file paths, leading with the agent name {agent} "
+            "which just changed to {status} in workspace {workspace}: "
+            "summarize the agent terminal output on stdin for a voice "
+            "announcement. Reply with only the sentence."
+        ),
+    ]
+
+
+def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
+    config_path = config_dir / "config.toml"
+    existed = config_path.exists()
+    config = load_config(config_dir)
+    chosen: List[str] = []
+    capabilities = _capabilities()
+
+    print("herdr-announcer setup")
+    print("Config path: {}".format(config_path))
+    if existed:
+        print("Values in brackets are current; Enter keeps them.")
+    else:
+        print("Values in brackets are defaults; Enter keeps them.")
+
+    while True:
+        value, explicit = _prompt(
+            "Announce which states?",
+            ",".join(str(item) for item in config["announce"]),
+        )
+        states = [item.strip().lower() for item in value.split(",") if item.strip()]
+        invalid = [item for item in states if item not in VALID_STATUSES]
+        if states and not invalid:
+            config["announce"] = states
+            if explicit:
+                chosen.append("announce")
+            break
+        print("Use a comma list containing only: {}.".format(
+            ",".join(sorted(VALID_STATUSES))
+        ))
+
+    print("Summary mode:")
+    summary_choices: Dict[str, str] = {}
+    if capabilities["codex"]:
+        summary_choices["1"] = "codex"
+        print("  1) codex (recommended)")
+    if capabilities["claude"]:
+        summary_choices["2"] = "command"
+        print("  2) command - Claude Code")
+    summary_choices["3"] = "template"
+    print("  3) template - no LLM")
+    current_summary = str(config.get("summary", ""))
+    default_summary = next(
+        (number for number, mode in summary_choices.items()
+         if mode == current_summary),
+        "1" if "1" in summary_choices else
+        "2" if "2" in summary_choices else "3",
+    )
+    summary, explicit = _prompt_choice(
+        "Summary mode", summary_choices, default_summary
+    )
+    config["summary"] = summary
+    if explicit:
+        chosen.append("summary")
+    if summary == "command":
+        config["summary_command"] = _claude_summary_command()
+        chosen.append("summary_command")
+    else:
+        config["summary_command"] = None
+    if summary == "codex":
+        model, model_explicit = _prompt(
+            "Codex model", str(config["codex_model"])
+        )
+        effort, effort_explicit = _prompt(
+            "Codex effort", str(config["codex_effort"])
+        )
+        config["codex_model"] = model
+        config["codex_effort"] = effort
+        if model_explicit:
+            chosen.append("codex_model")
+        if effort_explicit:
+            chosen.append("codex_effort")
+
+    print("Style:\n  1) announcement\n  2) summary\n  3) custom")
+    style_numbers = {"announcement": "1", "summary": "2", "custom": "3"}
+    style, explicit = _prompt_choice(
+        "Style",
+        {"1": "announcement", "2": "summary", "3": "custom"},
+        style_numbers.get(str(config["style"]), "1"),
+    )
+    config["style"] = style
+    if explicit:
+        chosen.append("style")
+    if style == "custom":
+        print("Available placeholders: {agent} {workspace} {status}")
+        prompt, prompt_explicit = _prompt(
+            "Prompt template", str(config["custom_prompt"])
+        )
+        config["custom_prompt"] = prompt
+        if prompt_explicit:
+            chosen.append("custom_prompt")
+
+    local_names = [
+        name for name in ("say", "spd-say", "espeak") if capabilities[name]
+    ]
+    detected = ", ".join(local_names) if local_names else "none detected"
+    print("Voice backend:")
+    print("  1) local TTS ({})".format(detected))
+    print("  2) ElevenLabs")
+    print("  3) custom command")
+    print("  4) keep current")
+    backend, backend_explicit = _prompt_choice(
+        "Voice backend",
+        {"1": "local", "2": "elevenlabs", "3": "custom", "4": "keep"},
+        "4" if existed else "1",
+    )
+    if backend == "local":
+        config["speak_command"] = None
+        config["elevenlabs_api_key"] = ""
+        if backend_explicit:
+            chosen.extend(("speak_command", "elevenlabs_api_key"))
+        if platform.system() == "Darwin":
+            voice, voice_explicit = _prompt(
+                "Optional macOS voice name", str(config["voice"])
+            )
+            config["voice"] = voice
+            if voice_explicit:
+                chosen.append("voice")
+    elif backend == "elevenlabs":
+        api_key, key_explicit = _prompt(
+            "ElevenLabs API key", str(config["elevenlabs_api_key"])
+        )
+        voice_id, voice_explicit = _prompt(
+            "ElevenLabs voice id", str(config["elevenlabs_voice_id"])
+        )
+        model, model_explicit = _prompt(
+            "ElevenLabs model", str(config["elevenlabs_model"])
+        )
+        config["speak_command"] = None
+        config["elevenlabs_api_key"] = api_key
+        config["elevenlabs_voice_id"] = voice_id
+        config["elevenlabs_model"] = model
+        chosen.extend(("speak_command", "elevenlabs_api_key"))
+        if voice_explicit:
+            chosen.append("elevenlabs_voice_id")
+        if model_explicit:
+            chosen.append("elevenlabs_model")
+        if key_explicit:
+            chosen.append("elevenlabs_api_key")
+    elif backend == "custom":
+        print("Include {text} in an argument, or text is sent on stdin.")
+        current = config.get("speak_command")
+        current_line = shlex.join(current) if isinstance(current, list) else ""
+        while True:
+            line, unused = _prompt("Full command argv", current_line)
+            try:
+                command = shlex.split(line)
+            except ValueError as exc:
+                print("Invalid command: {}".format(exc))
+                continue
+            if command:
+                config["speak_command"] = command
+                config["elevenlabs_api_key"] = ""
+                chosen.extend(("speak_command", "elevenlabs_api_key"))
+                break
+            print("Command must not be empty.")
+
+    toast, explicit = _prompt_yes_no("Show toast?", bool(config["toast"]))
+    config["toast"] = toast
+    if explicit:
+        chosen.append("toast")
+    while True:
+        debounce, explicit = _prompt(
+            "Debounce seconds", str(config["debounce_seconds"])
+        )
+        try:
+            debounce_value = int(debounce)
+            if debounce_value < 0:
+                raise ValueError
+        except ValueError:
+            print("Please enter a non-negative integer.")
+            continue
+        config["debounce_seconds"] = debounce_value
+        if explicit:
+            chosen.append("debounce_seconds")
+        break
+
+    _write_config(config_path, config, chosen)
+    test_voice, unused = _prompt_yes_no("Test the voice now?", True)
+    if test_voice:
+        try:
+            state_dir.mkdir(parents=True, exist_ok=True)
+            backend_used = speak(
+                load_config(config_dir), "Announcer is configured", state_dir
+            )
+            print("Voice test used: {}".format(backend_used))
+        except Exception as exc:
+            print("Voice test failed: {}".format(exc))
+    print("Setup complete.")
+    print("Test later with: herdr plugin action invoke nhclink16.announcer.test")
+    print("See README.md for configuration details.")
+    return 0
+
+
+def run_setup(config_dir: Path, state_dir: Path) -> int:
+    config_path = config_dir / "config.toml"
+    backup_path = config_path.with_name("config.toml.bak")
+    original = config_path.read_bytes() if config_path.exists() else None
+    old_backup = backup_path.read_bytes() if backup_path.exists() else None
+    try:
+        return _setup_wizard(config_dir, state_dir)
+    except KeyboardInterrupt:
+        if original is None:
+            try:
+                config_path.unlink()
+            except FileNotFoundError:
+                pass
+        elif not config_path.exists() or config_path.read_bytes() != original:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_bytes(original)
+        if old_backup is None:
+            try:
+                backup_path.unlink()
+            except FileNotFoundError:
+                pass
+        elif not backup_path.exists() or backup_path.read_bytes() != old_backup:
+            backup_path.write_bytes(old_backup)
+        print("\nsetup aborted, nothing written")
+        return 130
+
+
 def show_toast(herdr_bin: str, text: str) -> None:
     """Best-effort Herdr toast; delivery follows the user's ui.toast config."""
     try:
@@ -774,6 +1109,18 @@ def main() -> int:
     test_mode = len(sys.argv) == 2 and sys.argv[1] == "--test"
     config_dir = Path(os.environ.get("HERDR_PLUGIN_CONFIG_DIR") or ".")
     state_dir = Path(os.environ.get("HERDR_PLUGIN_STATE_DIR") or ".")
+    if len(sys.argv) == 2 and sys.argv[1] == "status":
+        try:
+            return show_status(config_dir, state_dir)
+        except Exception as exc:
+            sys.stderr.write("announcer error: {}\n".format(exc))
+            return 1
+    if len(sys.argv) == 2 and sys.argv[1] == "setup":
+        try:
+            return run_setup(config_dir, state_dir)
+        except Exception as exc:
+            sys.stderr.write("announcer error: {}\n".format(exc))
+            return 1
     log_context = {
         "pane_id": "-",
         "status": "test" if test_mode else "-",
