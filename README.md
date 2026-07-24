@@ -15,6 +15,13 @@ invoice tests passed") — by `codex exec` by default, or by any CLI you point
 Set `summary = "template"` for instant fixed phrasing. A missing or failing
 summarizer never mutes the announcement; it falls back to the template.
 
+Three prompt styles: `announcement` (radio-voice, leads with the agent's
+name), `summary` (plain factual report), or `custom` (write your own prompt;
+`{agent}`, `{workspace}`, and `{status}` are filled in). See
+[config.example.toml](config.example.toml). An [example ACP
+client](examples/acp-summary.py) shows how to use Claude over the Agent
+Client Protocol as the summarizer.
+
 Simultaneous finishes don't talk over each other: announcements take a file
 lock around playback, so they queue and speak one at a time.
 

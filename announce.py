@@ -31,6 +31,8 @@ DEFAULTS: Dict[str, Any] = {
     "codex_effort": "low",
     "codex_timeout_seconds": 45,
     "summary_command": None,
+    "style": "announcement",
+    "custom_prompt": "",
     "speak_command": None,
     "elevenlabs_api_key": "",
     "elevenlabs_voice_id": "21m00Tcm4TlvDq8ikWAM",
@@ -379,6 +381,46 @@ def _sanitize_summary(summary: str) -> str:
     return " ".join(words[:40])
 
 
+ANNOUNCEMENT_PROMPT = (
+    "You are the voice announcer for a terminal multiplexer. "
+    "An AI coding agent named '{agent}' in workspace '{workspace}' just "
+    "changed state to '{status}'. Below is the tail of its terminal output. "
+    "Write ONE natural spoken sentence (maximum 25 words) summarizing what "
+    "happened, suitable for text-to-speech. Plain words only: no markdown, no "
+    "code symbols, no file paths. Lead with the agent name. Reply with the "
+    "sentence and nothing else."
+)
+
+SUMMARY_PROMPT = (
+    "An AI coding agent named '{agent}' in workspace '{workspace}' just "
+    "changed state to '{status}'. Below is the tail of its terminal output. "
+    "Write ONE factual sentence (maximum 25 words) stating what the agent did "
+    "and the outcome, suitable for text-to-speech. Plain words only: no "
+    "markdown, no code symbols, no file paths. Reply with the sentence and "
+    "nothing else."
+)
+
+
+def build_prompt(
+    config: Dict[str, Any], name: str, workspace: str, status: str
+) -> str:
+    style = str(config.get("style", "announcement")).lower()
+    custom = config.get("custom_prompt")
+    if style == "custom" and isinstance(custom, str) and custom:
+        template = custom
+    elif style == "summary":
+        template = SUMMARY_PROMPT
+    else:
+        template = ANNOUNCEMENT_PROMPT
+    for placeholder, value in (
+        ("{agent}", name),
+        ("{workspace}", workspace),
+        ("{status}", status),
+    ):
+        template = template.replace(placeholder, value)
+    return template
+
+
 def codex_summary(
     config: Dict[str, Any],
     name: str,
@@ -386,15 +428,9 @@ def codex_summary(
     status: str,
     transcript: str,
 ) -> Optional[str]:
-    prompt = (
-        "You are the voice announcer for a terminal multiplexer. "
-        "An AI coding agent named '{}' in workspace '{}' just changed state "
-        "to '{}'. Below is the tail of its terminal output. Write ONE natural "
-        "spoken sentence (maximum 25 words) summarizing what happened, suitable "
-        "for text-to-speech. Plain words only: no markdown, no code symbols, no "
-        "file paths. Lead with the agent name. Reply with the sentence and "
-        "nothing else. --- terminal output --- {}"
-    ).format(name, workspace, status, transcript)
+    prompt = "{} --- terminal output --- {}".format(
+        build_prompt(config, name, workspace, status), transcript
+    )
     command = [
         "codex",
         "exec",

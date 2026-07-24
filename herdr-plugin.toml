@@ -1,6 +1,6 @@
 id = "nhclink16.announcer"
 name = "Announcer"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.7.0"
 description = "Speaks a short summary when an agent finishes or needs input - local TTS, ElevenLabs, or any custom command"
 platforms = ["macos", "linux"]
