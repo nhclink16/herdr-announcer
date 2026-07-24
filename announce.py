@@ -30,6 +30,7 @@ DEFAULTS: Dict[str, Any] = {
     "codex_model": "gpt-5.6-luna",
     "codex_effort": "low",
     "codex_timeout_seconds": 45,
+    "summary_command": None,
     "speak_command": None,
     "elevenlabs_api_key": "",
     "elevenlabs_voice_id": "21m00Tcm4TlvDq8ikWAM",
@@ -415,6 +416,47 @@ def codex_summary(
     return sanitized or None
 
 
+def command_summary(
+    config: Dict[str, Any],
+    name: str,
+    workspace: str,
+    status: str,
+    transcript: str,
+) -> Optional[str]:
+    command_value = config.get("summary_command")
+    if not isinstance(command_value, list) or not all(
+        isinstance(argument, str) for argument in command_value
+    ) or not command_value:
+        return None
+    substitutions = {
+        "{agent}": name,
+        "{workspace}": workspace,
+        "{status}": status,
+    }
+    command = []
+    for argument in command_value:
+        for placeholder, value in substitutions.items():
+            argument = argument.replace(placeholder, value)
+        command.append(argument)
+    try:
+        completed = subprocess.run(
+            command,
+            check=True,
+            input=transcript,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    if not lines:
+        return None
+    sanitized = _sanitize_summary(lines[-1])
+    return sanitized or None
+
+
 def make_announcement(
     config: Dict[str, Any],
     name: str,
@@ -422,11 +464,14 @@ def make_announcement(
     status: str,
     transcript: str,
 ) -> str:
-    if str(config.get("summary", "")).lower() == "codex" and transcript:
-        generated = codex_summary(config, name, workspace, status, transcript)
-        if generated:
-            return generated
-    return template_summary(name, workspace, status)
+    mode = str(config.get("summary", "")).lower()
+    generated = None
+    if transcript:
+        if mode == "codex":
+            generated = codex_summary(config, name, workspace, status, transcript)
+        elif mode == "command":
+            generated = command_summary(config, name, workspace, status, transcript)
+    return generated or template_summary(name, workspace, status)
 
 
 @contextmanager

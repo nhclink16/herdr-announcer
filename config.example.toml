@@ -11,11 +11,19 @@ debounce_seconds = 30
 
 # Summary mode:
 #   "codex"    - one-sentence LLM summary of what the agent did (via codex exec)
+#   "command"  - same, but through any CLI you provide (see summary_command)
 #   "template" - instant fixed phrasing ("builder finished in billing-api"), no LLM
+# Codex and command modes fall back to template phrasing if the tool is
+# missing, times out, or fails — a broken summarizer never mutes announcements.
 summary = "codex"
 codex_model = "gpt-5.6-luna"
 codex_effort = "low"
 codex_timeout_seconds = 45
+
+# For summary = "command": any CLI that reads the transcript on stdin and
+# prints one sentence. {agent}, {workspace}, and {status} are substituted.
+# No Codex? Claude Code works out of the box:
+# summary_command = ["claude", "-p", "--model", "haiku", "One spoken sentence, maximum 25 words, plain words only, no markdown or file paths, leading with the agent name {agent} which just changed to {status} in workspace {workspace}: summarize the agent terminal output on stdin for a voice announcement. Reply with only the sentence."]
 
 # Also show the summary as a Herdr toast notification. Toasts follow your
 # [ui.toast] delivery setting — with delivery = "terminal" they reach you even
