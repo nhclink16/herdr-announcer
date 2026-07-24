@@ -717,6 +717,254 @@ def show_status(config_dir: Path, state_dir: Path) -> int:
     return 0
 
 
+# ---- clack-style interactive widgets (stdlib only, TTY with line fallback) --
+
+try:
+    import termios
+    import tty
+except ImportError:  # non-Unix
+    termios = None  # type: ignore
+    tty = None  # type: ignore
+import select as _select_mod
+
+
+def _tty_active() -> bool:
+    return (
+        termios is not None
+        and sys.stdin.isatty()
+        and sys.stdout.isatty()
+    )
+
+
+def _c(text: str, code: str) -> str:
+    return "\x1b[{}m{}\x1b[0m".format(code, text)
+
+
+@contextmanager
+def _raw_mode() -> Iterator[None]:
+    """Hold raw mode for a whole widget loop so buffered keys never get
+    cooked-mode line buffering between reads."""
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        yield
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _read_key() -> str:
+    """Read one keypress; assumes raw mode. Arrows return 'up'/'down'."""
+    fd = sys.stdin.fileno()
+    ch = os.read(fd, 1).decode("utf-8", "ignore")
+    if ch == "\x1b":
+        ready, _unused, _unused2 = _select_mod.select([fd], [], [], 0.05)
+        if not ready:
+            return "esc"
+        seq = os.read(fd, 2).decode("utf-8", "ignore")
+        if seq in ("[A", "OA"):
+            return "up"
+        if seq in ("[B", "OB"):
+            return "down"
+        return "esc"
+    return ch
+
+
+def _frame(lines: List[str], previous_height: int) -> int:
+    """Redraw a widget frame in place; returns the new frame height."""
+    out = sys.stdout
+    if previous_height:
+        out.write("\x1b[{}A".format(previous_height))
+    for line in lines:
+        out.write("\r\x1b[2K" + line + "\n")
+    out.flush()
+    return len(lines)
+
+
+def _collapse(height: int, title: str, answer: str) -> None:
+    sys.stdout.write("\x1b[{}A".format(height))
+    for _unused in range(height):
+        sys.stdout.write("\r\x1b[2K\n")
+    sys.stdout.write("\x1b[{}A".format(height))
+    sys.stdout.write(
+        "\r\x1b[2K" + _c("◇", "90") + " " + _c(title, "90")
+        + _c(" · ", "90") + _c(answer, "36") + "\n"
+    )
+    sys.stdout.flush()
+
+
+def _hide_cursor() -> None:
+    sys.stdout.write("\x1b[?25l")
+    sys.stdout.flush()
+
+
+def _show_cursor() -> None:
+    sys.stdout.write("\x1b[?25h")
+    sys.stdout.flush()
+
+
+def ask_select(
+    title: str,
+    options: Sequence[Tuple[str, str]],
+    default_value: str,
+    hint: str = "",
+) -> Tuple[str, bool]:
+    """options: (value, label). Returns (value, changed-from-default)."""
+    if not _tty_active():
+        print(title)
+        choices: Dict[str, str] = {}
+        for index, (value, label) in enumerate(options, 1):
+            choices[str(index)] = value
+            print("  {}) {}".format(index, label))
+        default_number = next(
+            (n for n, v in choices.items() if v == default_value), "1"
+        )
+        return _prompt_choice("  choice", choices, default_number)
+
+    index = next(
+        (i for i, (value, _unused) in enumerate(options) if value == default_value),
+        0,
+    )
+    height = 0
+    _hide_cursor()
+    try:
+      with _raw_mode():
+        while True:
+            lines = [_c("◆", "36") + " " + _c(title, "1")]
+            if hint:
+                lines.append(_c("│", "90") + "  " + _c(hint, "90"))
+            for i, (_unused, label) in enumerate(options):
+                if i == index:
+                    lines.append(
+                        _c("│", "90") + "  "
+                        + _c("●", "36") + " " + _c(label, "1")
+                    )
+                else:
+                    lines.append(
+                        _c("│", "90") + "  "
+                        + _c("○ " + label, "90")
+                    )
+            lines.append(_c("└", "90"))
+            height = _frame(lines, height)
+            key = _read_key()
+            if key in ("up", "k"):
+                index = (index - 1) % len(options)
+            elif key in ("down", "j", "\t"):
+                index = (index + 1) % len(options)
+            elif key.isdigit() and 1 <= int(key) <= len(options):
+                index = int(key) - 1
+            elif key in ("\r", "\n"):
+                value, label = options[index]
+                _collapse(height, title, label.split("  ")[0].strip())
+                return value, value != default_value
+            elif key == "\x03":
+                raise KeyboardInterrupt
+    finally:
+        _show_cursor()
+
+
+def ask_multiselect(
+    title: str,
+    options: Sequence[Tuple[str, str]],
+    default_selected: Sequence[str],
+    hint: str = "space toggles, enter confirms",
+) -> Tuple[List[str], bool]:
+    if not _tty_active():
+        while True:
+            value, explicit = _prompt(
+                title + " (comma list)", ",".join(default_selected)
+            )
+            picked = [v.strip().lower() for v in value.split(",") if v.strip()]
+            valid = {v for v, _unused in options}
+            if picked and all(v in valid for v in picked):
+                return picked, explicit
+            print("  Choose from: {}.".format(", ".join(sorted(valid))))
+
+    selected = {value for value in default_selected}
+    index = 0
+    height = 0
+    _hide_cursor()
+    try:
+      with _raw_mode():
+        while True:
+            lines = [_c("◆", "36") + " " + _c(title, "1")]
+            lines.append(_c("│", "90") + "  " + _c(hint, "90"))
+            for i, (value, label) in enumerate(options):
+                box = _c("◼", "36") if value in selected else _c("◻", "90")
+                cursor = _c("❯", "36") if i == index else " "
+                text = _c(label, "1") if i == index else _c(label, "90")
+                lines.append(
+                    _c("│", "90") + " " + cursor + box + " " + text
+                )
+            lines.append(_c("└", "90"))
+            height = _frame(lines, height)
+            key = _read_key()
+            if key in ("up", "k"):
+                index = (index - 1) % len(options)
+            elif key in ("down", "j", "\t"):
+                index = (index + 1) % len(options)
+            elif key == " ":
+                value = options[index][0]
+                if value in selected:
+                    selected.discard(value)
+                else:
+                    selected.add(value)
+            elif key in ("\r", "\n"):
+                if not selected:
+                    continue
+                ordered = [v for v, _unused in options if v in selected]
+                _collapse(height, title, ", ".join(ordered))
+                return ordered, set(ordered) != set(default_selected)
+            elif key == "\x03":
+                raise KeyboardInterrupt
+    finally:
+        _show_cursor()
+
+
+def ask_confirm(title: str, default: bool) -> Tuple[bool, bool]:
+    if not _tty_active():
+        return _prompt_yes_no(title, default)
+    value, changed = ask_select(
+        title,
+        [("yes", "Yes"), ("no", "No")],
+        "yes" if default else "no",
+    )
+    result = value == "yes"
+    return result, result != default
+
+
+def ask_text(
+    title: str, default: str, display_default: Optional[str] = None
+) -> Tuple[str, bool]:
+    """Line input, styled on a TTY. Enter keeps the default."""
+    if not _tty_active():
+        value, explicit = _prompt(title, display_default or default)
+        if display_default is not None and value == display_default:
+            return default, False
+        return value, explicit
+    shown = display_default if display_default is not None else default
+    print(_c("◆", "36") + " " + _c(title, "1"))
+    try:
+        raw = input(
+            _c("│", "90") + "  " + _c("[{}]".format(shown), "90") + " > "
+        )
+    except EOFError:
+        raw = ""
+    value = raw.strip()
+    if not value or (display_default is not None and value == shown):
+        result, explicit = default, False
+    else:
+        result, explicit = value, True
+    if not explicit:
+        summary = shown
+    elif display_default is not None:
+        summary = "(updated)"
+    else:
+        summary = result
+    _collapse(2, title, str(summary) if summary else "(blank)")
+    return result, explicit
+
+
 def _prompt(label: str, default: str) -> Tuple[str, bool]:
     try:
         value = input("{} [{}]: ".format(label, default))
@@ -848,160 +1096,143 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
     config = load_config(config_dir)
     chosen: List[str] = []
     capabilities = _capabilities()
+    fancy = _tty_active()
 
-    print("herdr-announcer setup")
-    print("=" * 46)
+    print(_c("herdr-announcer setup", "1") if fancy else "herdr-announcer setup")
     print("Config: {}".format(config_path))
-    print("Enter keeps the value shown in [brackets]{}.".format(
-        " (your current setting)" if existed else " (the default)"
+    print("{} Ctrl-C exits without writing anything.".format(
+        "Arrows move, Enter confirms." if fancy
+        else "Enter keeps the value in [brackets]."
     ))
-    print("Ctrl-C exits without writing anything.")
+    print()
 
     # 1 -- states
-    print()
-    print("1/6  When should it speak?")
-    print("     done    - an agent finished work you weren't watching")
-    print("     blocked - an agent is waiting on your approval or input")
-    print("     (working, idle, and unknown are also valid, but chatty)")
-    while True:
-        value, explicit = _prompt(
-            "     states",
-            ",".join(str(item) for item in config["announce"]),
-        )
-        states = [item.strip().lower() for item in value.split(",") if item.strip()]
-        invalid = [item for item in states if item not in VALID_STATUSES]
-        if states and not invalid:
-            config["announce"] = states
-            if explicit:
-                chosen.append("announce")
-            break
-        print("     Use a comma-separated list from: {}.".format(
-            ", ".join(sorted(VALID_STATUSES))
-        ))
+    states, changed = ask_multiselect(
+        "When should it speak?",
+        [
+            ("done", "done - an agent finished work you weren't watching"),
+            ("blocked", "blocked - an agent is waiting on your input"),
+            ("idle", "idle - an agent settled while you were watching"),
+            ("working", "working - an agent started doing something (chatty)"),
+            ("unknown", "unknown - unrecognized agent activity (chatty)"),
+        ],
+        [str(item) for item in config["announce"]],
+    )
+    config["announce"] = states
+    if changed:
+        chosen.append("announce")
 
     # 2 -- summarizer
-    print()
-    print("2/6  Who writes the summary sentence?")
     has_custom_summary = bool(config.get("summary_command"))
     options: List[Tuple[str, str]] = []
     if capabilities["codex"]:
-        options.append(("codex", "Codex        one-sentence summary via codex exec"))
+        options.append(("codex", "Codex - one-sentence summary via codex exec"))
     if has_custom_summary:
-        options.append(("command", "Custom       keep your current summary command"))
+        options.append(("command", "Custom - keep your current summary command"))
     elif capabilities["claude"]:
-        options.append(("command", "Claude Code  one-sentence summary via claude -p"))
-    options.append(("template", 'None         instant "<agent> finished in <workspace>" phrasing'))
-    summary_choices: Dict[str, str] = {}
-    for index, (mode, label) in enumerate(options, 1):
-        summary_choices[str(index)] = mode
-        print("     {}) {}".format(index, label))
+        options.append(("command", "Claude Code - one-sentence summary via claude -p"))
+    options.append(("template", "None - instant fixed phrasing, no LLM"))
     current_summary = str(config.get("summary", ""))
-    default_summary = next(
-        (number for number, mode in summary_choices.items()
-         if mode == current_summary),
-        "1",
-    )
-    summary, explicit = _prompt_choice(
-        "     choice", summary_choices, default_summary
+    if current_summary not in {value for value, _unused in options}:
+        current_summary = options[0][0]
+    summary, changed = ask_select(
+        "Who writes the summary sentence?", options, current_summary
     )
     config["summary"] = summary
-    if explicit:
+    if changed:
         chosen.append("summary")
     if summary == "command":
         if not has_custom_summary:
             config["summary_command"] = _claude_summary_command()
         chosen.append("summary_command")
     if summary == "codex":
-        model, model_explicit = _prompt(
-            "     model", str(config["codex_model"])
-        )
-        effort, effort_explicit = _prompt(
-            "     effort (low/medium/high)", str(config["codex_effort"])
-        )
+        model, explicit = ask_text("Codex model", str(config["codex_model"]))
         config["codex_model"] = model
-        config["codex_effort"] = effort
-        if model_explicit:
+        if explicit:
             chosen.append("codex_model")
-        if effort_explicit:
+        effort, changed = ask_select(
+            "Codex reasoning effort",
+            [
+                ("low", "low - fast, plenty for a one-line summary"),
+                ("medium", "medium - a touch more careful"),
+                ("high", "high - slow, rarely worth it here"),
+            ],
+            str(config["codex_effort"]),
+        )
+        config["codex_effort"] = effort
+        if changed:
             chosen.append("codex_effort")
 
-    # 3 -- style (only meaningful when an LLM writes the sentence)
+    # 3 -- style
     if summary != "template":
-        print()
-        print("3/6  How should it sound?")
-        print('     1) announcement - "Builder finished the proration work and all tests passed."')
-        print("     2) factual      - plain report of what happened, no radio voice")
-        print("     3) custom       - write your own prompt")
-        style_numbers = {"announcement": "1", "summary": "2", "custom": "3"}
-        style, explicit = _prompt_choice(
-            "     choice",
-            {"1": "announcement", "2": "summary", "3": "custom"},
-            style_numbers.get(str(config["style"]), "1"),
+        style, changed = ask_select(
+            "How should it sound?",
+            [
+                ("announcement", 'Announcer - "Builder finished the work and tests passed."'),
+                ("summary", "Factual - plain report, no radio voice"),
+                ("custom", "Custom - write your own prompt"),
+            ],
+            str(config["style"]) if str(config["style"]) in
+            ("announcement", "summary", "custom") else "announcement",
         )
         config["style"] = style
-        if explicit:
+        if changed:
             chosen.append("style")
         if style == "custom":
-            print("     Placeholders: {agent} {workspace} {status}; the agent's")
-            print("     terminal output is appended after your prompt.")
             while True:
-                prompt, prompt_explicit = _prompt(
-                    "     prompt", str(config["custom_prompt"])
+                prompt, explicit = ask_text(
+                    "Prompt template ({agent} {workspace} {status} substituted; "
+                    "transcript appended)",
+                    str(config["custom_prompt"]),
                 )
                 if prompt:
                     config["custom_prompt"] = prompt
                     chosen.append("custom_prompt")
                     break
-                if not prompt_explicit:
-                    print("     No template given - keeping announcement style.")
+                if not explicit:
+                    print("No template given - keeping announcement style.")
                     config["style"] = "announcement"
                     break
-                print("     Custom style needs a non-empty prompt.")
-    else:
-        print()
-        print("3/6  How should it sound? (skipped - template phrasing is fixed)")
 
     # 4 -- voice
-    print()
-    print("4/6  Where should the voice come out?")
     local_names = [
         name for name in ("say", "spd-say", "espeak") if capabilities[name]
     ]
     detected = ", ".join(local_names) if local_names else "nothing detected!"
-    print("     1) this machine    built-in text-to-speech ({})".format(detected))
-    print("     2) ElevenLabs      natural voice, needs an API key")
-    print("     3) custom command  route it anywhere: ssh, ntfy, a script")
-    print("     4) keep current")
-    backend, backend_explicit = _prompt_choice(
-        "     choice",
-        {"1": "local", "2": "elevenlabs", "3": "custom", "4": "keep"},
-        "4" if existed else "1",
+    backend, backend_changed = ask_select(
+        "Where should the voice come out?",
+        [
+            ("keep", "Keep current voice settings"),
+            ("local", "This machine - built-in text-to-speech ({})".format(detected)),
+            ("elevenlabs", "ElevenLabs - natural voice, needs an API key"),
+            ("custom", "Custom command - ssh somewhere, ntfy push, any script"),
+        ],
+        "keep" if existed else "local",
     )
     if backend == "local":
         config["speak_command"] = None
         config["elevenlabs_api_key"] = ""
-        if backend_explicit:
-            chosen.extend(("speak_command", "elevenlabs_api_key"))
+        chosen.extend(("speak_command", "elevenlabs_api_key"))
         if platform.system() == "Darwin":
-            voice, voice_explicit = _prompt(
-                "     voice name (blank = system voice)", str(config["voice"])
+            voice, explicit = ask_text(
+                "macOS voice name (blank = system voice)", str(config["voice"])
             )
             config["voice"] = voice
-            if voice_explicit:
+            if explicit:
                 chosen.append("voice")
     elif backend == "elevenlabs":
         current_key = str(config["elevenlabs_api_key"])
         masked = current_key[:4] + "..." if current_key else ""
-        api_key, key_explicit = _prompt("     API key", masked)
-        if not key_explicit or api_key == masked:
-            api_key = current_key
-        if not api_key:
-            print("     No key entered - ElevenLabs stays inactive; local TTS will be used.")
-        voice_id, voice_explicit = _prompt(
-            "     voice id", str(config["elevenlabs_voice_id"])
+        api_key, key_explicit = ask_text(
+            "ElevenLabs API key", current_key, display_default=masked
         )
-        model, model_explicit = _prompt(
-            "     model", str(config["elevenlabs_model"])
+        if not api_key:
+            print("No key entered - ElevenLabs stays inactive; local TTS will be used.")
+        voice_id, voice_explicit = ask_text(
+            "ElevenLabs voice id", str(config["elevenlabs_voice_id"])
+        )
+        model, model_explicit = ask_text(
+            "ElevenLabs model", str(config["elevenlabs_model"])
         )
         config["speak_command"] = None
         config["elevenlabs_api_key"] = api_key
@@ -1015,49 +1246,49 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
         if key_explicit:
             chosen.append("elevenlabs_api_key")
     elif backend == "custom":
-        print("     One shell-style line; {text} is replaced with the announcement,")
-        print("     or with no {text} the announcement arrives on stdin.")
         current = config.get("speak_command")
         current_line = shlex.join(current) if isinstance(current, list) else ""
         while True:
-            line, line_explicit = _prompt("     command", current_line)
+            line, explicit = ask_text(
+                "Command ({text} substituted, or announcement on stdin)",
+                current_line,
+            )
             try:
                 command = shlex.split(line)
             except ValueError as exc:
-                print("     Invalid command: {}".format(exc))
+                print("Invalid command: {}".format(exc))
                 continue
             if command:
                 config["speak_command"] = command
                 config["elevenlabs_api_key"] = ""
                 chosen.extend(("speak_command", "elevenlabs_api_key"))
                 break
-            if not line_explicit:
-                print("     No command given - keeping current voice settings.")
+            if not explicit:
+                print("No command given - keeping current voice settings.")
                 break
-            print("     Command must not be empty.")
 
     # 5 -- toast
-    print()
-    print("5/6  Also show each announcement as a Herdr notification?")
-    print("     (reaches you over SSH, where sound can't)")
-    toast, explicit = _prompt_yes_no("     toast", bool(config["toast"]))
+    toast, changed = ask_confirm(
+        "Also show each announcement as a Herdr notification? "
+        "(reaches you over SSH)",
+        bool(config["toast"]),
+    )
     config["toast"] = toast
-    if explicit:
+    if changed:
         chosen.append("toast")
 
     # 6 -- debounce
-    print()
-    print("6/6  Ignore repeat announcements within how many seconds?")
     while True:
-        debounce, explicit = _prompt(
-            "     seconds", str(config["debounce_seconds"])
+        debounce, explicit = ask_text(
+            "Ignore repeats within how many seconds?",
+            str(config["debounce_seconds"]),
         )
         try:
             debounce_value = int(debounce)
             if debounce_value < 0:
                 raise ValueError
         except ValueError:
-            print("     Please enter a non-negative integer.")
+            print("Please enter a non-negative integer.")
             continue
         config["debounce_seconds"] = debounce_value
         if explicit:
@@ -1075,13 +1306,13 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
         print("  (empty file - everything matches the defaults)")
     if existed:
         print("Your current file will be kept as config.toml.bak.")
-    write_now, unused = _prompt_yes_no("Write it?", True)
+    write_now, _unused = ask_confirm("Write it?", True)
     if not write_now:
         print("Nothing written.")
         return 0
     _write_config(config_path, config, chosen)
 
-    test_voice, unused = _prompt_yes_no("Test the voice now?", True)
+    test_voice, _unused = ask_confirm("Test the voice now?", True)
     if test_voice:
         try:
             state_dir.mkdir(parents=True, exist_ok=True)
@@ -1092,7 +1323,7 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
         except Exception as exc:
             print("Voice test failed: {}".format(exc))
     print()
-    print("Done. Re-run this wizard anytime; your file is safe to hand-edit too.")
+    print("Done. Re-run this wizard anytime; the file is safe to hand-edit too.")
     return 0
 
 
