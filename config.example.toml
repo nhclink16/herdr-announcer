@@ -1,0 +1,42 @@
+# Announcer settings. Copy this file to the plugin config directory as
+# config.toml — find that directory with:
+#   herdr plugin config-dir nhclink16.announcer
+# Every key is optional; defaults shown below.
+
+# Which agent states trigger an announcement.
+announce = ["done", "blocked"]
+
+# Skip repeat announcements of the same pane+status inside this window.
+debounce_seconds = 30
+
+# Summary mode:
+#   "codex"    - one-sentence LLM summary of what the agent did (via codex exec)
+#   "template" - instant fixed phrasing ("builder finished in billing-api"), no LLM
+summary = "codex"
+codex_model = "gpt-5.6-luna"
+codex_effort = "low"
+codex_timeout_seconds = 45
+
+# Also show the summary as a Herdr toast notification. Toasts follow your
+# [ui.toast] delivery setting — with delivery = "terminal" they reach you even
+# over SSH, which makes this the "it just works remotely" option (visible, not
+# audible; audio over SSH needs a speak_command route, see below).
+toast = false
+
+# ---- Voice backend: first configured one wins ----
+
+# 1. Custom command (argv array). "{text}" is replaced with the announcement;
+#    if no argument contains {text}, the text is piped to stdin instead.
+#    Use this to route audio somewhere you can hear it when SSHed in, e.g.
+#    text-to-speech on another tailnet machine, or an ntfy push:
+# speak_command = ["ssh", "my-windows-box", "powershell", "-NoProfile", "-Command", "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')"]
+# speak_command = ["curl", "-s", "-d", "{text}", "ntfy.sh/my-agent-announcements"]
+
+# 2. ElevenLabs — set an API key to enable. Audio plays on this machine.
+# elevenlabs_api_key = ""
+# elevenlabs_voice_id = "21m00Tcm4TlvDq8ikWAM"
+# elevenlabs_model = "eleven_turbo_v2_5"
+
+# 3. Local TTS (default): `say` on macOS, spd-say/espeak on Linux.
+#    Audio plays on the machine running the Herdr server.
+# voice = "Samantha"
