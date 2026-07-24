@@ -68,11 +68,18 @@ herdr plugin install nhclink16/herdr-announcer
    herdr plugin action invoke nhclink16.announcer.status
    ```
 
-5. Optional — bind the wizard to a key in `~/.config/herdr/config.toml`:
+5. Optional — bind the wizard and status to keys in
+   `~/.config/herdr/config.toml`:
 
    ```toml
    [[keys.command]]
    key = "prefix+a"
+   type = "shell"
+   command = "herdr plugin pane open --plugin nhclink16.announcer --entrypoint setup"
+   description = "announcer setup"
+
+   [[keys.command]]
+   key = "prefix+shift+a"
    type = "plugin_action"
    command = "nhclink16.announcer.status"
    description = "announcer status"

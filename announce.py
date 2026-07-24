@@ -761,6 +761,18 @@ def _toml_value(value: Any) -> str:
     raise ValueError("cannot write configuration value")
 
 
+def _load_raw_config(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        if tomllib is not None:
+            with path.open("rb") as handle:
+                return tomllib.load(handle)
+        return _load_tiny_toml(path)
+    except (OSError, ValueError):
+        return {}
+
+
 def _write_config(
     path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
 ) -> None:
@@ -771,12 +783,41 @@ def _write_config(
         if config.get(key) is not None
         and (key in chosen or config.get(key) != DEFAULTS[key])
     ]
+    # Carry unknown keys forward so future plugin versions' settings survive.
+    extras = {
+        key: value
+        for key, value in _load_raw_config(path).items()
+        if key not in DEFAULTS
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         shutil.copy2(str(path), str(path.with_name("config.toml.bak")))
-    with path.open("w", encoding="utf-8") as handle:
-        for key in keys:
-            handle.write("{} = {}\n".format(key, _toml_value(config[key])))
+    temporary_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            prefix="config.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_name = handle.name
+            for key in keys:
+                handle.write("{} = {}\n".format(key, _toml_value(config[key])))
+            for key, value in extras.items():
+                try:
+                    handle.write("{} = {}\n".format(key, _toml_value(value)))
+                except ValueError:
+                    pass
+        os.replace(temporary_name, str(path))
+        temporary_name = ""
+    finally:
+        if temporary_name:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
 
 
 def _claude_summary_command() -> List[str]:
@@ -827,12 +868,16 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
 
     print("Summary mode:")
     summary_choices: Dict[str, str] = {}
+    has_custom_summary = bool(config.get("summary_command"))
     if capabilities["codex"]:
         summary_choices["1"] = "codex"
         print("  1) codex (recommended)")
-    if capabilities["claude"]:
+    if has_custom_summary or capabilities["claude"]:
         summary_choices["2"] = "command"
-        print("  2) command - Claude Code")
+        if has_custom_summary:
+            print("  2) command - keep current custom summarizer")
+        else:
+            print("  2) command - Claude Code")
     summary_choices["3"] = "template"
     print("  3) template - no LLM")
     current_summary = str(config.get("summary", ""))
@@ -849,10 +894,11 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
     if explicit:
         chosen.append("summary")
     if summary == "command":
-        config["summary_command"] = _claude_summary_command()
+        # Never clobber an existing custom summarizer with the preset.
+        if not has_custom_summary:
+            config["summary_command"] = _claude_summary_command()
         chosen.append("summary_command")
-    else:
-        config["summary_command"] = None
+    # Other modes keep summary_command in the file so switching back is easy.
     if summary == "codex":
         model, model_explicit = _prompt(
             "Codex model", str(config["codex_model"])
@@ -879,12 +925,19 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
         chosen.append("style")
     if style == "custom":
         print("Available placeholders: {agent} {workspace} {status}")
-        prompt, prompt_explicit = _prompt(
-            "Prompt template", str(config["custom_prompt"])
-        )
-        config["custom_prompt"] = prompt
-        if prompt_explicit:
-            chosen.append("custom_prompt")
+        while True:
+            prompt, prompt_explicit = _prompt(
+                "Prompt template", str(config["custom_prompt"])
+            )
+            if prompt:
+                config["custom_prompt"] = prompt
+                chosen.append("custom_prompt")
+                break
+            if not prompt_explicit:
+                print("No template given - keeping announcement style.")
+                config["style"] = "announcement"
+                break
+            print("Custom style needs a non-empty prompt template.")
 
     local_names = [
         name for name in ("say", "spd-say", "espeak") if capabilities[name]
@@ -913,9 +966,13 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
             if voice_explicit:
                 chosen.append("voice")
     elif backend == "elevenlabs":
-        api_key, key_explicit = _prompt(
-            "ElevenLabs API key", str(config["elevenlabs_api_key"])
-        )
+        current_key = str(config["elevenlabs_api_key"])
+        masked = current_key[:4] + "..." if current_key else ""
+        api_key, key_explicit = _prompt("ElevenLabs API key", masked)
+        if not key_explicit or api_key == masked:
+            api_key = current_key
+        if not api_key:
+            print("No key entered - ElevenLabs stays inactive; local TTS will be used.")
         voice_id, voice_explicit = _prompt(
             "ElevenLabs voice id", str(config["elevenlabs_voice_id"])
         )
@@ -938,7 +995,7 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
         current = config.get("speak_command")
         current_line = shlex.join(current) if isinstance(current, list) else ""
         while True:
-            line, unused = _prompt("Full command argv", current_line)
+            line, line_explicit = _prompt("Full command argv", current_line)
             try:
                 command = shlex.split(line)
             except ValueError as exc:
@@ -948,6 +1005,9 @@ def _setup_wizard(config_dir: Path, state_dir: Path) -> int:
                 config["speak_command"] = command
                 config["elevenlabs_api_key"] = ""
                 chosen.extend(("speak_command", "elevenlabs_api_key"))
+                break
+            if not line_explicit:
+                print("No command given - keeping current voice settings.")
                 break
             print("Command must not be empty.")
 
