@@ -13,9 +13,13 @@ debounce_seconds = 30
 #   "codex"    - one-sentence LLM summary of what the agent did (via codex exec)
 #   "command"  - same, but through any CLI you provide (see summary_command)
 #   "template" - instant fixed phrasing ("builder finished in billing-api"), no LLM
-# Codex and command modes fall back to template phrasing if the tool is
-# missing, times out, or fails — a broken summarizer never mutes announcements.
+# Codex mode falls back to template phrasing if the tool fails. Command mode
+# can fall back either to template phrasing or to Codex first.
 summary = "codex"
+summary_fallback = "template" # "template" or "codex"
+# Fall through quickly when a provider produces no model reasoning/output.
+# This is separate from the longer overall completion timeouts below.
+summary_first_activity_timeout_seconds = 5
 codex_model = "gpt-5.6-luna"
 codex_effort = "low"
 codex_timeout_seconds = 45
@@ -30,6 +34,9 @@ style = "announcement"
 
 # For summary = "command": any CLI that reads the transcript on stdin and
 # prints one sentence. {agent}, {workspace}, and {status} are substituted.
+# The bundled ACP client honors both the shared first-activity timeout and this
+# overall command timeout. Other custom commands only receive the overall cap.
+summary_command_timeout_seconds = 60
 # Claude over ACP (the protocol T3 Code and Conductor use) — bundled example
 # client, pinned to Sonnet 5, relative path resolves from the plugin directory:
 # summary_command = ["python3", "examples/acp-summary.py", "One spoken sentence, maximum 25 words, plain words only, no markdown or file paths, leading with the agent name {agent} which just changed to {status} in workspace {workspace}: summarize the agent terminal output below for a voice announcement. Reply with only the sentence."]

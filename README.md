@@ -105,10 +105,13 @@ wizard writes it for you; every key is optional.
 | `announce` | `["done", "blocked"]` | Agent states that trigger an announcement |
 | `debounce_seconds` | `30` | Suppress repeats of the same pane+status |
 | `summary` | `"codex"` | `codex`, `command`, or `template` |
+| `summary_fallback` | `"template"` | Failure fallback: `template`, or `codex` after `command` |
+| `summary_first_activity_timeout_seconds` | `5` | Time allowed for the first model reasoning/output event |
 | `codex_model` | `"gpt-5.6-luna"` | Model for codex mode |
 | `codex_effort` | `"low"` | Reasoning effort for codex mode |
-| `codex_timeout_seconds` | `45` | Codex call timeout before template fallback |
+| `codex_timeout_seconds` | `45` | Overall Codex completion timeout after launch |
 | `summary_command` | *(unset)* | argv for `summary = "command"`; transcript on stdin, `{agent}`/`{workspace}`/`{status}` substituted |
+| `summary_command_timeout_seconds` | `60` | Overall command timeout before fallback |
 | `style` | `"announcement"` | Prompt style: `announcement`, `summary`, or `custom` |
 | `custom_prompt` | *(unset)* | Your prompt for `style = "custom"` |
 | `speak_command` | *(unset)* | argv that receives the text (`{text}` or stdin); overrides other voices |

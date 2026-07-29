@@ -17,7 +17,20 @@ import time
 
 
 COMMAND = ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
-TIMEOUT_SECONDS = 90.0
+MODEL_ACTIVITY_UPDATES = {
+    "agent_message_chunk",
+    "agent_thought_chunk",
+    "plan",
+    "tool_call",
+}
+
+
+def timeout_from_environment(name, default):
+    try:
+        value = float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def send_message(process, message):
@@ -42,14 +55,34 @@ def request_error(message):
     return "ACP request failed"
 
 
-def wait_for_response(process, messages, response_id, deadline, chunks=None):
+def wait_for_response(
+    process,
+    messages,
+    response_id,
+    deadline,
+    chunks=None,
+    first_activity_deadline=None,
+):
     while True:
-        remaining = deadline - time.monotonic()
+        now = time.monotonic()
+        active_deadline = (
+            min(deadline, first_activity_deadline)
+            if first_activity_deadline is not None
+            else deadline
+        )
+        remaining = active_deadline - now
         if remaining <= 0:
+            if first_activity_deadline is not None and now >= first_activity_deadline:
+                raise TimeoutError("ACP model produced no activity")
             raise TimeoutError("ACP request timed out")
         try:
             line = messages.get(timeout=remaining)
         except queue.Empty:
+            if (
+                first_activity_deadline is not None
+                and time.monotonic() >= first_activity_deadline
+            ):
+                raise TimeoutError("ACP model produced no activity")
             raise TimeoutError("ACP request timed out")
 
         if line is None:
@@ -82,10 +115,12 @@ def wait_for_response(process, messages, response_id, deadline, chunks=None):
         if chunks is not None and message.get("method") == "session/update":
             params = message.get("params")
             update = params.get("update") if isinstance(params, dict) else None
-            if (
-                isinstance(update, dict)
-                and update.get("sessionUpdate") == "agent_message_chunk"
-            ):
+            update_type = (
+                update.get("sessionUpdate") if isinstance(update, dict) else None
+            )
+            if update_type in MODEL_ACTIVITY_UPDATES:
+                first_activity_deadline = None
+            if isinstance(update, dict) and update_type == "agent_message_chunk":
                 content = update.get("content")
                 text = content.get("text") if isinstance(content, dict) else None
                 if isinstance(text, str):
@@ -165,7 +200,9 @@ def new_session(process, messages, deadline, cwd):
     return session_id
 
 
-def prompt_session(process, messages, deadline, session_id, text):
+def prompt_session(
+    process, messages, deadline, session_id, text, first_activity_timeout
+):
     send_message(
         process,
         {
@@ -179,7 +216,14 @@ def prompt_session(process, messages, deadline, session_id, text):
         },
     )
     chunks = []
-    wait_for_response(process, messages, 2, deadline, chunks)
+    wait_for_response(
+        process,
+        messages,
+        2,
+        deadline,
+        chunks,
+        first_activity_deadline=time.monotonic() + first_activity_timeout,
+    )
     return " ".join("".join(chunks).split())
 
 
@@ -200,7 +244,13 @@ def start_adapter():
 
 
 def generate(instruction, stdin_text):
-    deadline = time.monotonic() + TIMEOUT_SECONDS
+    overall_timeout = timeout_from_environment(
+        "HERDR_SUMMARY_OVERALL_TIMEOUT_SECONDS", 90.0
+    )
+    first_activity_timeout = timeout_from_environment(
+        "HERDR_SUMMARY_FIRST_ACTIVITY_TIMEOUT_SECONDS", 5.0
+    )
+    deadline = time.monotonic() + overall_timeout
     temp_dir = tempfile.mkdtemp()
     process = None
     prompt_finished = False
@@ -217,7 +267,12 @@ def generate(instruction, stdin_text):
         session_id = new_session(process, messages, deadline, temp_dir)
         prompt_text = instruction + "\n\n--- input ---\n" + stdin_text
         reply = prompt_session(
-            process, messages, deadline, session_id, prompt_text
+            process,
+            messages,
+            deadline,
+            session_id,
+            prompt_text,
+            first_activity_timeout,
         )
         prompt_finished = True
         return reply

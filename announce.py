@@ -4,11 +4,13 @@
 import json
 import os
 import platform
+import queue
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import urllib.parse
@@ -28,10 +30,13 @@ DEFAULTS: Dict[str, Any] = {
     "announce": ["done", "blocked"],
     "debounce_seconds": 30,
     "summary": "codex",
+    "summary_fallback": "template",
+    "summary_first_activity_timeout_seconds": 5,
     "codex_model": "gpt-5.6-luna",
     "codex_effort": "low",
     "codex_timeout_seconds": 45,
     "summary_command": None,
+    "summary_command_timeout_seconds": 60,
     "style": "announcement",
     "custom_prompt": "",
     "speak_command": None,
@@ -435,6 +440,7 @@ def codex_summary(
     command = [
         "codex",
         "exec",
+        "--json",
         "-m",
         str(config["codex_model"]),
         "-c",
@@ -447,15 +453,141 @@ def codex_summary(
         "--skip-git-repo-check",
         prompt,
     ]
+    process = None
+    stdout_messages: "queue.Queue[Optional[str]]" = queue.Queue()
+    stderr_lines: List[str] = []
     try:
-        output = _run_text(command, timeout=float(config["codex_timeout_seconds"]))
-    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        if process.stdout is None or process.stderr is None:
+            return None
+        threading.Thread(
+            target=_read_stream_lines,
+            args=(process.stdout, stdout_messages),
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=_drain_stream,
+            args=(process.stderr, stderr_lines),
+            daemon=True,
+        ).start()
+        output = _collect_codex_summary(
+            stdout_messages,
+            first_activity_timeout=float(
+                config["summary_first_activity_timeout_seconds"]
+            ),
+            overall_timeout=float(config["codex_timeout_seconds"]),
+        )
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError, TimeoutError):
         return None
-    lines = [line.strip() for line in output.splitlines() if line.strip()]
-    if not lines:
+    finally:
+        if process is not None:
+            _stop_subprocess(process)
+    if not output:
         return None
-    sanitized = _sanitize_summary(lines[-1])
+    sanitized = _sanitize_summary(output)
     return sanitized or None
+
+
+CODEX_MODEL_ACTIVITY_ITEMS = {
+    "agent_message",
+    "reasoning",
+    "command_execution",
+    "mcp_tool_call",
+    "web_search",
+}
+
+
+def _read_stream_lines(stream: Any, messages: "queue.Queue[Optional[str]]") -> None:
+    try:
+        for line in iter(stream.readline, ""):
+            messages.put(line)
+    finally:
+        messages.put(None)
+
+
+def _drain_stream(stream: Any, lines: List[str]) -> None:
+    for line in iter(stream.readline, ""):
+        if sum(len(item) for item in lines) < 4000:
+            lines.append(line)
+
+
+def _stop_subprocess(process: Any) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+    except OSError:
+        return
+    try:
+        process.wait(timeout=0.5)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except OSError:
+            pass
+
+
+def _collect_codex_summary(
+    messages: "queue.Queue[Optional[str]]",
+    first_activity_timeout: float,
+    overall_timeout: float,
+) -> Optional[str]:
+    started_at = time.monotonic()
+    first_activity_deadline = started_at + first_activity_timeout
+    overall_deadline = started_at + overall_timeout
+    activity_seen = False
+    last_message = ""
+
+    while True:
+        now = time.monotonic()
+        deadline = overall_deadline if activity_seen else min(
+            first_activity_deadline, overall_deadline
+        )
+        remaining = deadline - now
+        if remaining <= 0:
+            if not activity_seen and deadline == first_activity_deadline:
+                raise TimeoutError("Codex produced no model activity")
+            raise TimeoutError("Codex summary timed out")
+        try:
+            line = messages.get(timeout=remaining)
+        except queue.Empty:
+            if not activity_seen and time.monotonic() >= first_activity_deadline:
+                raise TimeoutError("Codex produced no model activity")
+            raise TimeoutError("Codex summary timed out")
+        if line is None:
+            return last_message or None
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        event_type = event.get("type")
+        item = event.get("item")
+        item_type = item.get("type") if isinstance(item, dict) else None
+        if (
+            event_type in ("item.started", "item.completed")
+            and item_type in CODEX_MODEL_ACTIVITY_ITEMS
+        ):
+            activity_seen = True
+        if event_type == "item.completed" and item_type == "agent_message":
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                last_message = text.strip()
+        if event_type == "turn.completed":
+            return last_message or None
+        if event_type in ("turn.failed", "error"):
+            return None
 
 
 def command_summary(
@@ -480,6 +612,13 @@ def command_summary(
         for placeholder, value in substitutions.items():
             argument = argument.replace(placeholder, value)
         command.append(argument)
+    environment = os.environ.copy()
+    environment["HERDR_SUMMARY_FIRST_ACTIVITY_TIMEOUT_SECONDS"] = str(
+        config["summary_first_activity_timeout_seconds"]
+    )
+    environment["HERDR_SUMMARY_OVERALL_TIMEOUT_SECONDS"] = str(
+        config["summary_command_timeout_seconds"]
+    )
     try:
         completed = subprocess.run(
             command,
@@ -488,7 +627,8 @@ def command_summary(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=60,
+            env=environment,
+            timeout=float(config["summary_command_timeout_seconds"]),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -505,7 +645,7 @@ def make_announcement(
     workspace: str,
     status: str,
     transcript: str,
-) -> str:
+) -> Tuple[str, str]:
     mode = str(config.get("summary", "")).lower()
     generated = None
     if transcript:
@@ -513,7 +653,16 @@ def make_announcement(
             generated = codex_summary(config, name, workspace, status, transcript)
         elif mode == "command":
             generated = command_summary(config, name, workspace, status, transcript)
-    return generated or template_summary(name, workspace, status)
+    if generated:
+        return generated, mode
+
+    fallback = str(config.get("summary_fallback", "template")).lower()
+    if transcript and fallback == "codex" and mode != "codex":
+        generated = codex_summary(config, name, workspace, status, transcript)
+        if generated:
+            return generated, "codex-fallback"
+
+    return template_summary(name, workspace, status), "template"
 
 
 def check_and_record_debounce(
@@ -1404,13 +1553,14 @@ def process_invocation(
 
     name, workspace = get_context(herdr_bin, pane_id)
     transcript = get_transcript(herdr_bin, pane_id)
-    announcement = _sanitize_summary(
-        make_announcement(config, name, workspace, status, transcript)
+    generated_announcement, summary_backend = make_announcement(
+        config, name, workspace, status, transcript
     )
+    announcement = _sanitize_summary(generated_announcement)
     if config.get("toast"):
         show_toast(herdr_bin, announcement)
     backend = speak(config, announcement, state_dir)
-    return "announced+{}".format(backend)
+    return "announced+summary-{}+speak-{}".format(summary_backend, backend)
 
 
 def _log_field(value: str) -> str:
