@@ -140,6 +140,43 @@ cannot carry audio to your local speakers. Easiest first:
    speak_command = ["ssh", "my-desktop", "powershell -NoProfile -Command \"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')\""]
    ```
 
+### Following you between devices
+
+That `speak_command` is fixed to one machine. If you attach from several —
+a desktop, a laptop, sometimes sitting at the host itself —
+[`examples/route-speak.sh`](examples/route-speak.sh) detects where you actually
+are and speaks on every attached device, falling back to the host when nobody
+is remote. List your machines and point `speak_command` at it:
+
+```toml
+speak_command = ["/path/to/route-speak.sh"]
+```
+
+```sh
+HOSTS="
+desktop|10.0.0.5|windows
+laptop|10.0.0.6|macos
+"
+```
+
+Backends are `macos`, `windows`, `linux`, or `cmd:<anything reading stdin>`
+(`cmd:ntfy publish mytopic` works fine).
+
+**`who` alone is not enough.** It only sees interactive SSH logins, which have
+a TTY and a utmp entry. `herdr --remote <host>` attaches over `ssh -T` — no
+TTY, no utmp entry — so `who` reports nothing and a detector built on it
+silently misses every remote attach. The script also checks for an ESTABLISHED
+connection arriving at its own SSH port, which is the signal that catches it.
+
+That direction check matters. Your Herdr host likely holds *outbound* SSH
+sessions to the same machines — including the ones this script opens to speak —
+and matching those would make every peer look permanently present.
+
+One more trap worth knowing if you write your own: PowerShell single-quoted
+strings escape a quote by doubling it, so an apostrophe in the text breaks the
+command. Summaries are generated prose, so `it's` and `the agent's` are a
+matter of time. macOS `say` reads stdin, which avoids the problem entirely.
+
 ## How it works
 
 Herdr emits `pane.agent_status_changed`; the hook filters to your configured
