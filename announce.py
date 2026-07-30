@@ -450,6 +450,8 @@ def codex_summary(
         "--sandbox",
         "read-only",
         "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
         "--skip-git-repo-check",
         prompt,
     ]
@@ -457,6 +459,9 @@ def codex_summary(
     stdout_messages: "queue.Queue[Optional[str]]" = queue.Queue()
     stderr_lines: List[str] = []
     try:
+        first_activity_deadline = time.monotonic() + float(
+            config["summary_first_activity_timeout_seconds"]
+        )
         process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
@@ -481,10 +486,8 @@ def codex_summary(
         ).start()
         output = _collect_codex_summary(
             stdout_messages,
-            first_activity_timeout=float(
-                config["summary_first_activity_timeout_seconds"]
-            ),
-            overall_timeout=float(config["codex_timeout_seconds"]),
+            first_activity_deadline=first_activity_deadline,
+            completion_timeout=float(config["codex_timeout_seconds"]),
         )
     except (OSError, ValueError, TypeError, subprocess.SubprocessError, TimeoutError):
         return None
@@ -538,29 +541,24 @@ def _stop_subprocess(process: Any) -> None:
 
 def _collect_codex_summary(
     messages: "queue.Queue[Optional[str]]",
-    first_activity_timeout: float,
-    overall_timeout: float,
+    first_activity_deadline: float,
+    completion_timeout: float,
 ) -> Optional[str]:
-    started_at = time.monotonic()
-    first_activity_deadline = started_at + first_activity_timeout
-    overall_deadline = started_at + overall_timeout
-    activity_seen = False
+    completion_deadline: Optional[float] = None
     last_message = ""
 
     while True:
         now = time.monotonic()
-        deadline = overall_deadline if activity_seen else min(
-            first_activity_deadline, overall_deadline
-        )
+        deadline = completion_deadline or first_activity_deadline
         remaining = deadline - now
         if remaining <= 0:
-            if not activity_seen and deadline == first_activity_deadline:
+            if completion_deadline is None:
                 raise TimeoutError("Codex produced no model activity")
             raise TimeoutError("Codex summary timed out")
         try:
             line = messages.get(timeout=remaining)
         except queue.Empty:
-            if not activity_seen and time.monotonic() >= first_activity_deadline:
+            if completion_deadline is None:
                 raise TimeoutError("Codex produced no model activity")
             raise TimeoutError("Codex summary timed out")
         if line is None:
@@ -575,11 +573,12 @@ def _collect_codex_summary(
         event_type = event.get("type")
         item = event.get("item")
         item_type = item.get("type") if isinstance(item, dict) else None
-        if (
+        activity_event = (
             event_type in ("item.started", "item.completed")
             and item_type in CODEX_MODEL_ACTIVITY_ITEMS
-        ):
-            activity_seen = True
+        )
+        if activity_event and completion_deadline is None:
+            completion_deadline = time.monotonic() + completion_timeout
         if event_type == "item.completed" and item_type == "agent_message":
             text = item.get("text")
             if isinstance(text, str) and text.strip():
@@ -620,6 +619,14 @@ def command_summary(
         config["summary_command_timeout_seconds"]
     )
     try:
+        command_timeout = float(config["summary_command_timeout_seconds"])
+        if any(os.path.basename(argument) == "acp-summary.py" for argument in command):
+            # The bundled ACP client enforces its own first-activity deadline,
+            # then receives a fresh completion window after model activity.
+            # Give it enough outer wall time to honor both phases and clean up.
+            command_timeout += (
+                float(config["summary_first_activity_timeout_seconds"]) + 2.0
+            )
         completed = subprocess.run(
             command,
             check=True,
@@ -628,9 +635,9 @@ def command_summary(
             stderr=subprocess.PIPE,
             text=True,
             env=environment,
-            timeout=float(config["summary_command_timeout_seconds"]),
+            timeout=command_timeout,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         return None
     lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
     if not lines:

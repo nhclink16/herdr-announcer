@@ -28,6 +28,8 @@ downgrade logic left untouched."*
   lock and speak one at a time
 - **Never goes silent from a broken summarizer** — LLM failures fall back
   to template phrasing; the announcement always goes out
+- **Fast provider failover** — a short startup/activity deadline can move from
+  a custom provider such as Sonnet to sandboxed Codex, then fixed phrasing
 - **Optional toast** — mirror every announcement as a Herdr notification
   (reaches you over SSH when sound can't)
 
@@ -106,12 +108,12 @@ wizard writes it for you; every key is optional.
 | `debounce_seconds` | `30` | Suppress repeats of the same pane+status |
 | `summary` | `"codex"` | `codex`, `command`, or `template` |
 | `summary_fallback` | `"template"` | Failure fallback: `template`, or `codex` after `command` |
-| `summary_first_activity_timeout_seconds` | `5` | Time allowed for the first model reasoning/output event |
+| `summary_first_activity_timeout_seconds` | `5` | Time from provider launch to its first model reasoning/output event |
 | `codex_model` | `"gpt-5.6-luna"` | Model for codex mode |
 | `codex_effort` | `"low"` | Reasoning effort for codex mode |
-| `codex_timeout_seconds` | `45` | Overall Codex completion timeout after launch |
+| `codex_timeout_seconds` | `45` | Codex completion window after first activity |
 | `summary_command` | *(unset)* | argv for `summary = "command"`; transcript on stdin, `{agent}`/`{workspace}`/`{status}` substituted |
-| `summary_command_timeout_seconds` | `60` | Overall command timeout before fallback |
+| `summary_command_timeout_seconds` | `60` | Bundled ACP completion window after first model activity |
 | `style` | `"announcement"` | Prompt style: `announcement`, `summary`, or `custom` |
 | `custom_prompt` | *(unset)* | Your prompt for `style = "custom"` |
 | `speak_command` | *(unset)* | argv that receives the text (`{text}` or stdin); overrides other voices |

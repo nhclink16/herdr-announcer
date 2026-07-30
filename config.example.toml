@@ -41,6 +41,16 @@ summary_command_timeout_seconds = 60
 # client, pinned to Sonnet 5, relative path resolves from the plugin directory:
 # summary_command = ["python3", "examples/acp-summary.py", "One spoken sentence, maximum 25 words, plain words only, no markdown or file paths, leading with the agent name {agent} which just changed to {status} in workspace {workspace}: summarize the agent terminal output below for a voice announcement. Reply with only the sentence."]
 
+# Fast Sonnet 5 -> Codex Terra -> fixed-template fallback chain:
+# summary = "command"
+# summary_fallback = "codex"
+# summary_first_activity_timeout_seconds = 5
+# summary_command_timeout_seconds = 30
+# codex_model = "gpt-5.6-terra"
+# codex_effort = "low"
+# codex_timeout_seconds = 45
+# summary_command = ["python3", "examples/acp-summary.py", "One spoken sentence, maximum 25 words, plain words only, no markdown or file paths, leading with the agent name {agent} which just changed to {status} in workspace {workspace}: summarize the agent terminal output below for a voice announcement. Reply with only the sentence."]
+
 # No Codex? Claude Code works out of the box:
 # summary_command = ["claude", "-p", "--model", "haiku", "One spoken sentence, maximum 25 words, plain words only, no markdown or file paths, leading with the agent name {agent} which just changed to {status} in workspace {workspace}: summarize the agent terminal output on stdin for a voice announcement. Reply with only the sentence."]
 

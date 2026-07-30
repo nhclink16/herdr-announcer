@@ -59,17 +59,16 @@ def wait_for_response(
     process,
     messages,
     response_id,
-    deadline,
+    deadline=None,
     chunks=None,
     first_activity_deadline=None,
+    completion_timeout=None,
 ):
     while True:
         now = time.monotonic()
-        active_deadline = (
-            min(deadline, first_activity_deadline)
-            if first_activity_deadline is not None
-            else deadline
-        )
+        active_deadline = first_activity_deadline or deadline
+        if active_deadline is None:
+            raise ValueError("a response deadline is required")
         remaining = active_deadline - now
         if remaining <= 0:
             if first_activity_deadline is not None and now >= first_activity_deadline:
@@ -119,7 +118,10 @@ def wait_for_response(
                 update.get("sessionUpdate") if isinstance(update, dict) else None
             )
             if update_type in MODEL_ACTIVITY_UPDATES:
-                first_activity_deadline = None
+                if first_activity_deadline is not None:
+                    first_activity_deadline = None
+                    if completion_timeout is not None:
+                        deadline = time.monotonic() + completion_timeout
             if isinstance(update, dict) and update_type == "agent_message_chunk":
                 content = update.get("content")
                 text = content.get("text") if isinstance(content, dict) else None
@@ -188,7 +190,19 @@ def new_session(process, messages, deadline, cwd):
             "jsonrpc": "2.0",
             "id": 1,
             "method": "session/new",
-            "params": {"cwd": cwd, "mcpServers": []},
+            "params": {
+                "cwd": cwd,
+                "mcpServers": [],
+                "_meta": {
+                    "disableBuiltInTools": True,
+                    "claudeCode": {
+                        "options": {
+                            "settingSources": [],
+                            "mcpServers": {},
+                        }
+                    },
+                },
+            },
         },
     )
     result = wait_for_response(process, messages, 1, deadline)
@@ -201,7 +215,12 @@ def new_session(process, messages, deadline, cwd):
 
 
 def prompt_session(
-    process, messages, deadline, session_id, text, first_activity_timeout
+    process,
+    messages,
+    session_id,
+    text,
+    first_activity_deadline,
+    completion_timeout,
 ):
     send_message(
         process,
@@ -220,9 +239,10 @@ def prompt_session(
         process,
         messages,
         2,
-        deadline,
+        None,
         chunks,
-        first_activity_deadline=time.monotonic() + first_activity_timeout,
+        first_activity_deadline=first_activity_deadline,
+        completion_timeout=completion_timeout,
     )
     return " ".join("".join(chunks).split())
 
@@ -250,7 +270,7 @@ def generate(instruction, stdin_text):
     first_activity_timeout = timeout_from_environment(
         "HERDR_SUMMARY_FIRST_ACTIVITY_TIMEOUT_SECONDS", 5.0
     )
-    deadline = time.monotonic() + overall_timeout
+    first_activity_deadline = time.monotonic() + first_activity_timeout
     temp_dir = tempfile.mkdtemp()
     process = None
     prompt_finished = False
@@ -263,22 +283,28 @@ def generate(instruction, stdin_text):
             target=read_stdout, args=(process.stdout, messages), daemon=True
         ).start()
 
-        initialize(process, messages, deadline)
-        session_id = new_session(process, messages, deadline, temp_dir)
+        initialize(process, messages, first_activity_deadline)
+        session_id = new_session(
+            process, messages, first_activity_deadline, temp_dir
+        )
         prompt_text = instruction + "\n\n--- input ---\n" + stdin_text
         reply = prompt_session(
             process,
             messages,
-            deadline,
             session_id,
             prompt_text,
-            first_activity_timeout,
+            first_activity_deadline,
+            overall_timeout,
         )
         prompt_finished = True
         return reply
     finally:
         if process is not None:
-            stop_process(process, prompt_finished, deadline)
+            stop_process(
+                process,
+                prompt_finished,
+                time.monotonic() + 1.0,
+            )
         shutil.rmtree(temp_dir)
 
 
