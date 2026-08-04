@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 # runtime log written beside the plugin
 *.log
+speak.lock
