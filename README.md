@@ -164,6 +164,15 @@ laptop|10.0.0.6|macos
 Backends are `macos`, `windows`, `linux`, or `cmd:<anything reading stdin>`
 (`cmd:ntfy publish mytopic` works fine).
 
+**Detected is not reachable.** A sleeping or powered-off machine leaves its
+`ESTABLISHED` TCP entry behind for a long time, so presence detection alone will
+happily route speech to a host that is gone — and then the announcement is lost
+while ssh waits out its timeout. The script probes the SSH port with a short
+`nc -z` before believing a host is present, and if *no* host actually accepted
+the speech it falls back to the local machine rather than dropping it. Silent
+loss is the worst failure mode here: everything exits 0 and you simply stop
+hearing announcements.
+
 **`who` alone is not enough.** It only sees interactive SSH logins, which have
 a TTY and a utmp entry. `herdr --remote <host>` attaches over `ssh -T` — no
 TTY, no utmp entry — so `who` reports nothing and a detector built on it

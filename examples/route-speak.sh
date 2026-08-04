@@ -55,8 +55,14 @@ inbound_from() {
   '
 }
 
+# A sleeping peer leaves its ESTABLISHED entry behind, so "detected" is not
+# "reachable". Probe the SSH port with a short timeout before believing it.
+reachable() {
+  nc -z -G 2 "$1" "$SSH_PORT" >/dev/null 2>&1
+}
+
 present() {
-  who 2>/dev/null | grep -q "$1" || inbound_from "$1"
+  { who 2>/dev/null | grep -q "$1" || inbound_from "$1"; } && reachable "$1"
 }
 
 speak_on() {
@@ -102,16 +108,27 @@ if [ -z "$attached" ]; then
   exec $LOCAL_SPEAK "$text"
 fi
 
-# Speak everywhere at once rather than one device after another.
+# Speak everywhere at once rather than one device after another. Collect exit
+# statuses: a host can pass the liveness probe and still fail to deliver (it
+# sleeps mid-run, sshd refuses, the backend is missing). If nothing lands, the
+# announcement must not be silently dropped.
 saved_ifs=$IFS
 IFS='
 '
+_pids=""
 for entry in $attached; do
   IFS=$saved_ifs
   speak_on "${entry%%|*}" "${entry#*|}" &
+  _pids="$_pids $!"
   IFS='
 '
 done
 IFS=$saved_ifs
 
-wait
+_spoke=0
+for _p in $_pids; do
+  wait "$_p" && _spoke=1
+done
+
+# Nobody accepted it — say it here rather than lose it.
+[ "$_spoke" = 1 ] || exec $LOCAL_SPEAK "$text"
