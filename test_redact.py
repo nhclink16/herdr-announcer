@@ -43,6 +43,27 @@ class CommandRedactionTests(unittest.TestCase):
             ["helper", "****4321", "--verbose", "-c", "****8765"],
         )
 
+    def test_redact_command_masks_attached_option_values(self):
+        commands = (
+            (["mysql", "-psuper-secret-1234"], "super-secret-1234"),
+            (
+                ["curl", "-HAuthorization: Bearer super-secret-1234"],
+                "super-secret-1234",
+            ),
+            (["helper", "--tokensuper-secret-1234"], "super-secret-1234"),
+        )
+
+        for command, secret in commands:
+            with self.subTest(command=command):
+                rendered = " ".join(redact_command(command))
+                diagnostic = redact_command_text(
+                    "Command {!r} failed".format(command), command
+                )
+                self.assertNotIn(secret, rendered)
+                self.assertNotIn(secret, diagnostic)
+                self.assertIn("****1234", rendered)
+                self.assertIn("****1234", diagnostic)
+
     def test_redact_command_text_removes_recognized_values_from_diagnostics(self):
         command = ["helper", "--api-key", "super-secret-1234"]
         diagnostic = (

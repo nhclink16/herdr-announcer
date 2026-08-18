@@ -22,6 +22,17 @@ _QUERY_SECRET_RE = re.compile(
     r"(?i)([?&](?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password)=)([^&\s]+)"
 )
 _ASSIGNMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SENSITIVE_OPTION_PREFIXES = tuple(
+    sorted(
+        {
+            "--" + name.replace("_", separator)
+            for name in _SENSITIVE_NAMES
+            for separator in ("-", "_")
+        },
+        key=len,
+        reverse=True,
+    )
+)
 
 
 def mask_secret(value: str) -> str:
@@ -52,6 +63,20 @@ def _redact_embedded(value: str) -> Tuple[str, List[str]]:
     return redacted, secrets
 
 
+def _attached_option_value(argument: str) -> Tuple[str, str]:
+    """Split option values joined to their flag, conservatively."""
+    if (
+        argument.startswith("-")
+        and not argument.startswith("--")
+        and len(argument) > 2
+    ):
+        return argument[:2], argument[2:]
+    for prefix in _SENSITIVE_OPTION_PREFIXES:
+        if argument.startswith(prefix) and len(argument) > len(prefix):
+            return prefix, argument[len(prefix):]
+    return "", ""
+
+
 def _redact_command(command: Sequence[str]) -> Tuple[List[str], List[str]]:
     if not command:
         return [], []
@@ -76,6 +101,11 @@ def _redact_command(command: Sequence[str]) -> Tuple[List[str], List[str]]:
                 continue
 
         if argument.startswith("-"):
+            prefix, value = _attached_option_value(argument)
+            if value:
+                redacted.append(prefix + mask_secret(value))
+                secrets.append(value)
+                continue
             redacted.append(argument)
             if _is_sensitive_name(argument):
                 mask_next = True
