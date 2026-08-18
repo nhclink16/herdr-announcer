@@ -1,5 +1,7 @@
 # herdr-announcer
 
+[![test](https://github.com/nhclink16/herdr-announcer/actions/workflows/test.yml/badge.svg)](https://github.com/nhclink16/herdr-announcer/actions/workflows/test.yml)
+
 Your agents, out loud. A [Herdr](https://herdr.dev) plugin that speaks a
 one-sentence summary when a coding agent finishes its work or gets stuck
 waiting for you.
@@ -28,6 +30,10 @@ downgrade logic left untouched."*
   lock and speak one at a time
 - **Never goes silent from a broken summarizer** — LLM failures fall back
   to template phrasing; the announcement always goes out
+- **Failures explain themselves** — every fallback records *why*
+  (`reasons=codex: timeout-first-activity`) in the log, and `status` shows
+  the last error, so "why is it the robot voice?" is a glance, not an
+  investigation
 - **Fast provider failover** — a short startup/activity deadline can move from
   a custom provider such as Sonnet to sandboxed Codex, then fixed phrasing
 - **Optional toast** — mirror every announcement as a Herdr notification
@@ -36,10 +42,15 @@ downgrade logic left untouched."*
 ## Requirements
 
 - Herdr ≥ 0.7.0, macOS or Linux, Python 3.9+
-- Linux local TTS needs `spd-say` or `espeak`; macOS needs nothing
+- Linux local TTS needs `espeak-ng`, `espeak`, or `spd-say`; macOS needs
+  nothing. One `spd-say` caveat: speech-dispatcher is often installed but
+  not running, and then `spd-say` exits happily having said nothing — the
+  announcer gives it five seconds and moves on to espeak, but if you *only*
+  have spd-say and hear silence, that daemon is the first suspect.
 - Optional: [Codex CLI](https://github.com/openai/codex) or any CLI LLM for
   summaries; ElevenLabs API key for a natural voice (playback via `afplay`,
-  `mpv`, or `ffplay`)
+  `mpv`, or `ffplay` — or, with none of those, raw PCM straight to `paplay`,
+  `pw-play`, or `aplay`, so a stock desktop Linux needs nothing extra)
 
 ## Install
 
@@ -51,7 +62,8 @@ herdr plugin install nhclink16/herdr-announcer
 
 1. Install (above). The event hook is live immediately with defaults:
    announce `done` + `blocked`, Codex summaries if `codex` is on your PATH,
-   local text-to-speech.
+   local text-to-speech. No codex? Nothing breaks — you get instant template
+   phrasing instead of an LLM sentence.
 2. Run the setup wizard to tailor it — either in a Herdr pane:
 
    ```bash
@@ -148,7 +160,11 @@ That `speak_command` is fixed to one machine. If you attach from several —
 a desktop, a laptop, sometimes sitting at the host itself —
 [`examples/route-speak.sh`](examples/route-speak.sh) detects where you actually
 are and speaks on every attached device, falling back to the host when nobody
-is remote. List your machines and point `speak_command` at it:
+is remote. It runs on macOS and Linux hosts alike — it picks the local voice
+automatically (`say`, `espeak-ng`, `spd-say`, `espeak`), detects which `nc`
+flavor it has for the liveness probe, and reads connections from `ss` or
+`netstat`, whichever exists. List your machines and point `speak_command` at
+it:
 
 ```toml
 speak_command = ["/path/to/route-speak.sh"]
@@ -183,10 +199,13 @@ That direction check matters. Your Herdr host likely holds *outbound* SSH
 sessions to the same machines — including the ones this script opens to speak —
 and matching those would make every peer look permanently present.
 
-One more trap worth knowing if you write your own: PowerShell single-quoted
-strings escape a quote by doubling it, so an apostrophe in the text breaks the
-command. Summaries are generated prose, so `it's` and `the agent's` are a
-matter of time. macOS `say` reads stdin, which avoids the problem entirely.
+One more trap worth knowing if you write your own: quoting. The announcer
+sanitizes every summary to letters, digits, and basic punctuation before it
+reaches `speak_command` — summaries come from LLMs reading untrusted agent
+output, and a summary that can smuggle `$(...)` into a remote shell command is
+a security hole, not a quoting bug. Even so, prefer handing the text over
+stdin (macOS `say` and `espeak-ng` both read it) instead of splicing `{text}`
+into a command string; stdin has no quoting rules to get wrong.
 
 ## How it works
 
@@ -208,11 +227,27 @@ summaries run `--sandbox read-only --ephemeral`.
 
 ## Troubleshooting
 
+![status demo](assets/status.gif)
+
 Every invocation appends one line to `announcer.log` in the plugin state
-directory (`announced+<backend>`, `skipped-status`, `debounced`, or `error`
-with a traceback). Herdr's own view: `herdr plugin log list --plugin
-nhclink16.announcer`. Silent? Check the log first — "no announceable events"
-and "spoke on the wrong machine" are the usual suspects.
+directory (`announced+<backend>`, `skipped-status`, `debounced`,
+`gave-up-waiting`, or `error` with a traceback) — and when anything fell back
+along the way, a `reasons=` field says exactly what: `codex: turn.failed`,
+`elevenlabs: HTTP 401`, `spd-say: timeout`. `python3 announce.py status`
+shows the tail of the log, the last recorded error, every voice and player
+found on the machine, and any config keys it didn't recognize (typos show up
+here). Herdr's own view: `herdr plugin log list --plugin nhclink16.announcer`.
+Silent? Check `status` first — "no announceable events" and "spoke on the
+wrong machine" are the usual suspects, and the reasons now name the second.
+
+## Development
+
+```bash
+python3 -m unittest discover   # 64 tests, silent, no network
+shellcheck examples/*.sh
+```
+
+CI runs both on macOS and Ubuntu across Python 3.9/3.11/3.13.
 
 ## License
 

@@ -45,10 +45,7 @@ Sleep 800ms
 Enter
 Sleep 800ms
 
-# voice: this machine
-Enter
-Sleep 600ms
-# voice name: system default
+# voice: this machine (the wizard no longer asks for a voice name here)
 Enter
 Sleep 700ms
 

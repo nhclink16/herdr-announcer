@@ -64,8 +64,13 @@ toast = false
 
 # 1. Custom command (argv array). "{text}" is replaced with the announcement;
 #    if no argument contains {text}, the text is piped to stdin instead.
+#    Prefer the stdin form when the target can read it — no quoting rules to
+#    get wrong. (Announcements are sanitized to plain words before they reach
+#    this command, so {text} inside a remote shell string is safe; stdin is
+#    still the cleaner habit.)
 #    Use this to route audio somewhere you can hear it when SSHed in, e.g.
 #    text-to-speech on another tailnet machine, or an ntfy push:
+# speak_command = ["ssh", "my-mac", "say"]
 # speak_command = ["ssh", "my-windows-box", "powershell", "-NoProfile", "-Command", "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')"]
 # speak_command = ["curl", "-s", "-d", "{text}", "ntfy.sh/my-agent-announcements"]
 
