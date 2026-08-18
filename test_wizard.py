@@ -251,17 +251,60 @@ class ConfigWriterTests(unittest.TestCase):
 
 
 class WizardFlowTests(unittest.TestCase):
-    def test_ctrl_c_after_write_keeps_new_file(self):
+    def test_wizard_intro_explains_every_exit_key(self):
+        capabilities = {
+            name: None
+            for name in (
+                "codex",
+                "claude",
+                "say",
+                "spd-say",
+                "espeak-ng",
+                "espeak",
+                "mpv",
+                "ffplay",
+                "afplay",
+                "paplay",
+                "pw-play",
+                "aplay",
+            )
+        }
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            wizard, "capabilities", return_value=capabilities
+        ), mock.patch.object(
+            wizard, "tty_active", return_value=True
+        ), mock.patch.object(
+            wizard, "ask_multiselect", side_effect=KeyboardInterrupt
+        ), contextlib.redirect_stdout(output):
+            with self.assertRaises(KeyboardInterrupt):
+                wizard._setup_wizard(
+                    Path(directory) / "config", Path(directory) / "state"
+                )
+
+        text = output.getvalue()
+        self.assertIn("q quits choices", text)
+        self.assertIn("Esc or Ctrl-C exits", text)
+
+    def test_ctrl_c_after_write_restores_config_backup_and_releases_lock(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config_dir = root / "config"
             state_dir = root / "state"
             config_dir.mkdir()
             path = config_dir / "config.toml"
-            path.write_text('summary = "codex"\n', encoding="utf-8")
+            backup_path = config_dir / "config.toml.bak"
+            original = b'# exact original\nsummary = "codex"\n'
+            original_backup = b'# exact prior backup\nsummary = "command"\n'
+            path.write_bytes(original)
+            backup_path.write_bytes(original_backup)
+            path.chmod(0o640)
+            backup_path.chmod(0o600)
 
             def write_then_interrupt(_config_dir, _state_dir, write_state):
-                path.write_text('summary = "template"\n', encoding="utf-8")
+                config = load_config(config_dir)
+                config["summary"] = "template"
+                wizard.write_config(path, config, ["summary"])
                 write_state["written"] = True
                 raise KeyboardInterrupt
 
@@ -271,11 +314,29 @@ class WizardFlowTests(unittest.TestCase):
             ), contextlib.redirect_stdout(output):
                 result = wizard.run_setup(config_dir, state_dir)
 
-            contents = path.read_text(encoding="utf-8")
+            contents = path.read_bytes()
+            backup_contents = backup_path.read_bytes()
+            restored_mode = path.stat().st_mode & 0o7777
+            restored_backup_mode = backup_path.stat().st_mode & 0o7777
+            restore_temps = list(config_dir.glob("*.restore.*.tmp"))
+            reacquired = threading.Event()
+
+            def reacquire():
+                with wizard.config_lock(path):
+                    reacquired.set()
+
+            thread = threading.Thread(target=reacquire, daemon=True)
+            thread.start()
+            thread.join(1.0)
 
         self.assertEqual(result, 130)
-        self.assertEqual(contents, 'summary = "template"\n')
-        self.assertIn("config was kept", output.getvalue())
+        self.assertEqual(contents, original)
+        self.assertEqual(backup_contents, original_backup)
+        self.assertEqual(restored_mode, 0o640)
+        self.assertEqual(restored_backup_mode, 0o600)
+        self.assertEqual(restore_temps, [])
+        self.assertTrue(reacquired.is_set())
+        self.assertIn("nothing written", output.getvalue())
 
     def test_fresh_install_voice_choices_omit_keep_current(self):
         class StopWizard(Exception):

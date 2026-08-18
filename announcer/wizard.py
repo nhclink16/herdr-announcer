@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, MutableMapping, Optional, Sequence, Set, Tuple
 
 from .config import DEFAULTS, _load_tiny_toml, load_config, tomllib
+from .redact import mask_secret
 from .speech import capabilities, speak
 from .summarize import ANNOUNCEMENT_PROMPT
 from .tui import (
@@ -313,6 +314,38 @@ def _write_config_unlocked(
     print("Note: wizard writes do not preserve comments from hand-edited files.")
 
 
+def _restore_file(path: Path, contents: Optional[bytes], mode: Optional[int]) -> None:
+    """Atomically restore a setup snapshot, or remove a newly-created file."""
+    if contents is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=str(path.parent),
+            prefix="{}.restore.".format(path.name),
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_name = handle.name
+            handle.write(contents)
+        if mode is not None:
+            os.chmod(temporary_name, mode)
+        os.replace(temporary_name, str(path))
+        temporary_name = ""
+    finally:
+        if temporary_name:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+
+
 def write_config(
     path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
 ) -> None:
@@ -336,8 +369,7 @@ def _claude_summary_command() -> List[str]:
     ]
 
 
-def _mask_secret(value: str) -> str:
-    return "****{}".format(value[-4:]) if value else ""
+_mask_secret = mask_secret
 
 
 def _preview_line(line: str) -> str:
@@ -365,10 +397,13 @@ def _setup_wizard(
     print(colorize("herdr-announcer setup", "1") if fancy else "herdr-announcer setup")
     print("Config: {}".format(config_path))
     print(
-        "{} Ctrl-C exits without writing anything.".format(
+        "{} {}".format(
             "Arrows move, Enter confirms."
             if fancy
-            else "Enter keeps the value in [brackets]."
+            else "Enter keeps the value in [brackets].",
+            "q quits choices; Esc or Ctrl-C exits without writing anything."
+            if fancy
+            else "q quits choices; Ctrl-C exits without writing anything.",
         )
     )
     print()
@@ -613,28 +648,19 @@ def run_setup(config_dir: Path, state_dir: Path) -> int:
     backup_path = config_path.with_name("config.toml.bak")
     original = config_path.read_bytes() if config_path.exists() else None
     old_backup = backup_path.read_bytes() if backup_path.exists() else None
+    original_mode = (
+        config_path.stat().st_mode & 0o7777 if original is not None else None
+    )
+    backup_mode = (
+        backup_path.stat().st_mode & 0o7777 if old_backup is not None else None
+    )
     write_state = {"written": False}
     try:
         return _setup_wizard(config_dir, state_dir, write_state)
     except KeyboardInterrupt:
-        if write_state["written"]:
-            print("\nsetup aborted after write; config was kept")
-            return 130
-        if original is None:
-            try:
-                config_path.unlink()
-            except FileNotFoundError:
-                pass
-        elif not config_path.exists() or config_path.read_bytes() != original:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_bytes(original)
-        if old_backup is None:
-            try:
-                backup_path.unlink()
-            except FileNotFoundError:
-                pass
-        elif not backup_path.exists() or backup_path.read_bytes() != old_backup:
-            backup_path.write_bytes(old_backup)
+        with config_lock(config_path):
+            _restore_file(config_path, original, original_mode)
+            _restore_file(backup_path, old_backup, backup_mode)
         print("\nsetup aborted, nothing written")
         return 130
 
