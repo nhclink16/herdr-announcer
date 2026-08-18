@@ -85,7 +85,7 @@ class SummaryReasonTests(unittest.TestCase):
 
     @mock.patch.object(summarize.subprocess, "run")
     def test_command_no_output_diagnostic_redacts_stderr_secret(self, run):
-        secret = "super-secret-1234"
+        secret = "sk-super-secret-1234"
         config = self.config()
         config["summary_command"] = ["summarize", secret]
         run.return_value = subprocess.CompletedProcess(

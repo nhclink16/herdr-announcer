@@ -126,15 +126,15 @@ class CliRoutingTests(unittest.TestCase):
 
 class OrchestrationTests(unittest.TestCase):
     def test_failed_custom_speech_never_persists_or_displays_argv_secret(self):
-        secret = "sentinel-secret-4321"
-        command = ["speaker", secret]
+        secret = "sk-sentinel-secret-4321"
+        command = [secret]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config_dir = root / "config"
             state_dir = root / "state"
             config_dir.mkdir()
             (config_dir / "config.toml").write_text(
-                'speak_command = ["speaker", "{}"]\n'.format(secret),
+                'speak_command = ["{}"]\n'.format(secret),
                 encoding="utf-8",
             )
             stderr = io.StringIO()
