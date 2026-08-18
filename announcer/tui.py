@@ -342,6 +342,8 @@ def _ask_tty_line(title: str, shown_default: str, secret: bool) -> Tuple[str, in
                     raise KeyboardInterrupt
                 if key in ("\r", "\n"):
                     return "".join(entered), height
+                if key == "\x04":
+                    return "".join(entered), height
                 if key in ("\x7f", "\x08"):
                     if entered:
                         entered.pop()

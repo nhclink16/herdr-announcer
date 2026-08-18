@@ -148,6 +148,16 @@ class PromptAbortTests(unittest.TestCase):
         self.assertIn(b"PROMPT_RESULT=('q', True)", text_output)
         self.assertIn(b"PROMPT_RESULT=('q', True)", secret_output)
 
+    def test_ctrl_d_accepts_text_and_secret_defaults(self):
+        prompts = (
+            "tui.ask_text('Name', 'default')",
+            "tui.ask_secret('Secret', 'default')",
+        )
+        for prompt in prompts:
+            with self.subTest(prompt=prompt):
+                output = self.assert_completed(prompt, b"\x04")
+                self.assertIn(b"PROMPT_RESULT=('default', False)", output)
+
     def test_text_entry_preserves_unicode_and_backspace_editing(self):
         output = self.assert_completed(
             "tui.ask_text('Name', 'default')", "qa\x7fé\r".encode("utf-8")
