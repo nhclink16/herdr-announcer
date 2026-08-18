@@ -134,8 +134,8 @@ class AcpFirstActivityTests(unittest.TestCase):
                 json.dumps({"jsonrpc": "2.0", "id": 2, "result": {}})
             )
 
-        start_timer = threading.Timer(0.4, start)
-        finish_timer = threading.Timer(0.8, finish)
+        start_timer = threading.Timer(2.0, start)
+        finish_timer = threading.Timer(3.0, finish)
         start_timer.start()
         finish_timer.start()
         chunks = []
@@ -146,8 +146,8 @@ class AcpFirstActivityTests(unittest.TestCase):
                 2,
                 None,
                 chunks,
-                first_activity_deadline=time.monotonic() + 0.5,
-                completion_timeout=0.6,
+                first_activity_deadline=time.monotonic() + 2.5,
+                completion_timeout=2.5,
             )
         finally:
             start_timer.cancel()

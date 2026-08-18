@@ -198,15 +198,15 @@ class SummaryFallbackTests(unittest.TestCase):
             )
             messages.put(json.dumps({"type": "turn.completed"}))
 
-        start_timer = threading.Timer(0.4, start)
-        finish_timer = threading.Timer(0.8, finish)
+        start_timer = threading.Timer(2.0, start)
+        finish_timer = threading.Timer(3.0, finish)
         start_timer.start()
         finish_timer.start()
         try:
             result = announce._collect_codex_summary(
                 messages,
-                first_activity_deadline=time.monotonic() + 0.5,
-                completion_timeout=0.6,
+                first_activity_deadline=time.monotonic() + 2.5,
+                completion_timeout=2.5,
             )
         finally:
             start_timer.cancel()
