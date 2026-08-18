@@ -11,6 +11,10 @@ from announcer import wizard
 
 
 class ConfigWriterTests(unittest.TestCase):
+    def test_private_config_helpers_alias_public_api(self):
+        self.assertIs(wizard._load_raw_config, wizard.load_raw_config)
+        self.assertIs(wizard._write_config, wizard.write_config)
+
     def test_unknown_float_and_table_survive_known_update(self):
         original_unknown = (
             "future_timeout = 1.5\n"

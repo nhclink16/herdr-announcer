@@ -141,6 +141,9 @@ class ElevenLabsTests(unittest.TestCase):
 
 
 class StateAndLockTests(unittest.TestCase):
+    def test_private_capabilities_name_aliases_public_api(self):
+        self.assertIs(speech._capabilities, speech.capabilities)
+
     def test_old_rollback_cannot_delete_a_newer_reservation(self):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory)
