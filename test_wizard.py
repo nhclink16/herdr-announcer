@@ -1,6 +1,7 @@
 import contextlib
 import io
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -10,6 +11,76 @@ from announcer import wizard
 
 
 class ConfigWriterTests(unittest.TestCase):
+    def test_unknown_float_and_table_survive_known_update(self):
+        original_unknown = (
+            "future_timeout = 1.5\n"
+            "[future]\n"
+            'provider = "new-backend"\n'
+            "nested = { enabled = true }\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            path = config_dir / "config.toml"
+            path.write_text('summary = "template"\n' + original_unknown)
+            config = load_config(config_dir)
+            config["toast"] = True
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                wizard.write_config(path, config, ["toast"])
+
+            contents = path.read_text(encoding="utf-8")
+
+        self.assertIn('summary = "template"', contents)
+        self.assertIn("toast = true", contents)
+        self.assertIn(original_unknown, contents)
+
+    def test_stale_writers_rebase_chosen_keys_on_latest_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            path = config_dir / "config.toml"
+            stale_a = dict(DEFAULTS)
+            stale_b = dict(DEFAULTS)
+            stale_a["toast"] = True
+            stale_b["voice"] = "Alex"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                wizard.write_config(path, stale_a, ["toast"])
+                wizard.write_config(path, stale_b, ["voice"])
+
+            loaded = load_config(config_dir)
+
+        self.assertTrue(loaded["toast"])
+        self.assertEqual(loaded["voice"], "Alex")
+
+    def test_config_lock_serializes_writers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            entered = threading.Event()
+            release = threading.Event()
+            second_entered = threading.Event()
+
+            def first():
+                with wizard.config_lock(path):
+                    entered.set()
+                    release.wait(2.0)
+
+            def second():
+                entered.wait(2.0)
+                with wizard.config_lock(path):
+                    second_entered.set()
+
+            first_thread = threading.Thread(target=first)
+            second_thread = threading.Thread(target=second)
+            first_thread.start()
+            second_thread.start()
+            self.assertTrue(entered.wait(2.0))
+            self.assertFalse(second_entered.wait(0.05))
+            release.set()
+            first_thread.join(2.0)
+            second_thread.join(2.0)
+
+        self.assertTrue(second_entered.is_set())
+
     def test_write_then_reload_preserves_all_values(self):
         config = dict(DEFAULTS)
         config.update(

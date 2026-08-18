@@ -5,8 +5,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .config import DEFAULTS, load_config
-from .wizard import load_raw_config, write_config
+from .config import load_config
+from .wizard import write_config
 
 
 STATE_ORDER = ("done", "blocked", "idle", "working", "unknown")
@@ -21,13 +21,11 @@ def write_config_keys(
 ) -> Dict[str, Any]:
     """Merge updates into the on-disk config without dropping unknown keys."""
     path = config_path(config_dir)
-    raw = load_raw_config(path)
     config = load_config(config_dir)
     config.update(updates)
-    chosen = sorted({key for key in raw if key in DEFAULTS} | set(updates))
     with redirect_stdout(io.StringIO()):
-        write_config(path, config, chosen)
-    return config
+        write_config(path, config, sorted(updates))
+    return load_config(config_dir)
 
 
 def load_config_safely(config_dir: Path) -> Optional[Dict[str, Any]]:

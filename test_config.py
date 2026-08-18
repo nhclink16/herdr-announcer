@@ -48,7 +48,7 @@ toast = false
             reasons = []
             parsed = config_module._load_tiny_toml(path, reasons)
 
-        self.assertEqual(parsed, {"summary": "template", "toast": False})
+        self.assertEqual(parsed, {"summary": "template"})
         self.assertEqual(
             reasons,
             [
@@ -57,6 +57,7 @@ toast = false
                 "config: skipped line 5",
                 "config: skipped line 6",
                 "config: skipped line 7",
+                "config: skipped line 8",
             ],
         )
 
@@ -90,8 +91,21 @@ toast = false
             with mock.patch.object(config_module, "tomllib", None):
                 loaded = config_module.load_config(Path(directory), reasons=reasons)
 
-        self.assertEqual(loaded["summary"], "template")
-        self.assertEqual(reasons, ["config: skipped line 1"])
+        self.assertEqual(loaded["summary"], config_module.DEFAULTS["summary"])
+        self.assertEqual(
+            reasons, ["config: skipped line 1", "config: skipped line 2"]
+        )
+
+    def test_tiny_parser_accepts_standard_float_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_config(
+                directory, "codex_timeout_seconds = 5.5\nfuture_value = 1.25\n"
+            )
+
+            parsed = config_module._load_tiny_toml(path)
+
+        self.assertEqual(parsed["codex_timeout_seconds"], 5.5)
+        self.assertEqual(parsed["future_value"], 1.25)
 
 
 if __name__ == "__main__":

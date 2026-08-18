@@ -6,10 +6,11 @@ import platform
 import shlex
 import shutil
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, MutableMapping, Optional, Sequence, Set, Tuple
 
-from .config import DEFAULTS, _load_tiny_toml, load_config, tomllib
+from .config import DEFAULTS, _load_tiny_toml, _strip_comment, load_config, tomllib
 from .speech import capabilities, speak
 from .summarize import ANNOUNCEMENT_PROMPT
 from .tui import (
@@ -38,6 +39,70 @@ def _toml_value(value: Any) -> str:
 def load_raw_config(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
+
+
+@contextmanager
+def config_lock(path: Path) -> Iterator[None]:
+    """Serialize config read-modify-write transactions across processes."""
+    import fcntl
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name("config.toml.lock")
+    with lock_path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _top_level_known_keys(path: Path) -> Set[str]:
+    keys: Set[str] = set()
+    if not path.exists():
+        return keys
+    in_table = False
+    with path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = _strip_comment(raw_line)
+            if not line:
+                continue
+            if line.startswith("["):
+                in_table = True
+                continue
+            if in_table or "=" not in line:
+                continue
+            key = line.split("=", 1)[0].strip()
+            if key in DEFAULTS:
+                keys.add(key)
+    return keys
+
+
+def _preserved_config_lines(path: Path) -> List[str]:
+    """Keep every line except known, top-level settings rewritten below."""
+    if not path.exists():
+        return []
+    preserved: List[str] = []
+    in_table = False
+    with path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = _strip_comment(raw_line)
+            if line.startswith("["):
+                in_table = True
+            if not in_table and "=" in line:
+                key, raw_value = (part.strip() for part in line.split("=", 1))
+                if key in DEFAULTS:
+                    if (
+                        (raw_value.startswith("[") and not raw_value.endswith("]"))
+                        or (raw_value.startswith("{") and not raw_value.endswith("}"))
+                        or raw_value.startswith("\"\"\"")
+                        or raw_value.startswith("'''")
+                    ):
+                        raise ValueError(
+                            "cannot safely rewrite multiline config value"
+                        )
+                    continue
+            preserved.append(raw_line)
+    return preserved
     try:
         if tomllib is not None:
             with path.open("rb") as handle:
@@ -59,16 +124,11 @@ def _config_lines(
     ]
 
 
-def write_config(
+def _write_config_unlocked(
     path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
 ) -> None:
     lines = _config_lines(config, explicitly_chosen)
-    # Carry unknown keys forward so future plugin versions' settings survive.
-    extras = {
-        key: value
-        for key, value in load_raw_config(path).items()
-        if key not in DEFAULTS
-    }
+    preserved = _preserved_config_lines(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         shutil.copy2(str(path), str(path.with_name("config.toml.bak")))
@@ -85,11 +145,9 @@ def write_config(
             temporary_name = handle.name
             for line in lines:
                 handle.write(line + "\n")
-            for key, value in extras.items():
-                try:
-                    handle.write("{} = {}\n".format(key, _toml_value(value)))
-                except ValueError:
-                    pass
+            if lines and preserved and preserved[0].strip():
+                handle.write("\n")
+            handle.writelines(preserved)
         os.replace(temporary_name, str(path))
         temporary_name = ""
     finally:
@@ -99,6 +157,20 @@ def write_config(
             except FileNotFoundError:
                 pass
     print("Note: wizard writes do not preserve comments from hand-edited files.")
+
+
+def write_config(
+    path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
+) -> None:
+    """Atomically rebase chosen keys while preserving unknown TOML text."""
+    with config_lock(path):
+        existing_keys = _top_level_known_keys(path)
+        merged = load_config(path.parent) if path.exists() else dict(DEFAULTS)
+        for key in explicitly_chosen:
+            if key in DEFAULTS and key in config:
+                merged[key] = config[key]
+        chosen = sorted(existing_keys | set(explicitly_chosen))
+        _write_config_unlocked(path, merged, chosen)
 
 
 def _claude_summary_command() -> List[str]:
@@ -429,6 +501,7 @@ __all__ = [
     "_setup_wizard",
     "_toml_value",
     "_write_config",
+    "config_lock",
     "load_raw_config",
     "run_setup",
     "write_config",
