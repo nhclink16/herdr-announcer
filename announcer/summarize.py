@@ -1,6 +1,7 @@
 """Announcement prompt and summary backends."""
 
 import json
+import math
 import os
 import queue
 import subprocess
@@ -37,6 +38,13 @@ CODEX_MODEL_ACTIVITY_ITEMS = {
     "mcp_tool_call",
     "web_search",
 }
+
+
+def _positive_finite_timeout(value: Any) -> float:
+    timeout = float(value)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be finite and greater than zero")
+    return timeout
 
 
 def template_summary(name: str, workspace: str, status: str) -> str:
@@ -186,9 +194,13 @@ def codex_summary(
     output = None
     cause = ""
     try:
-        first_activity_deadline = time.monotonic() + float(
+        first_activity_timeout = _positive_finite_timeout(
             config["summary_first_activity_timeout_seconds"]
         )
+        completion_timeout = _positive_finite_timeout(
+            config["codex_timeout_seconds"]
+        )
+        first_activity_deadline = time.monotonic() + first_activity_timeout
         process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
@@ -216,7 +228,7 @@ def codex_summary(
             output = _collect_codex_summary(
                 stdout_messages,
                 first_activity_deadline=first_activity_deadline,
-                completion_timeout=float(config["codex_timeout_seconds"]),
+                completion_timeout=completion_timeout,
                 reasons=reasons,
             )
             if not output and (reasons is None or len(reasons) == before):
@@ -280,11 +292,13 @@ def command_summary(
         config["summary_command_timeout_seconds"]
     )
     try:
-        command_timeout = (
-            float(config["summary_first_activity_timeout_seconds"])
-            + float(config["summary_command_timeout_seconds"])
-            + 2.0
+        first_activity_timeout = _positive_finite_timeout(
+            config["summary_first_activity_timeout_seconds"]
         )
+        completion_timeout = _positive_finite_timeout(
+            config["summary_command_timeout_seconds"]
+        )
+        command_timeout = first_activity_timeout + completion_timeout + 2.0
         completed = subprocess.run(
             command,
             check=True,
@@ -299,21 +313,23 @@ def command_summary(
         if reasons is not None:
             reasons.append("command: timeout")
         return None
-    except (OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
+    except subprocess.CalledProcessError as error:
         if reasons is not None:
-            detail = str(error).strip()
-            reasons.append(
-                "command: {}".format(
-                    detail[:120] if detail else error.__class__.__name__
-                )
-            )
+            reasons.append("command: exit-{}".format(error.returncode))
+        return None
+    except OSError as error:
+        if reasons is not None:
+            suffix = "-{}".format(error.errno) if error.errno is not None else ""
+            reasons.append("command: os-error{}".format(suffix))
+        return None
+    except (ValueError, TypeError, subprocess.SubprocessError) as error:
+        if reasons is not None:
+            reasons.append("command: {}".format(error.__class__.__name__))
         return None
     lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
     if not lines:
         if reasons is not None:
-            detail = completed.stderr.strip().splitlines()
-            suffix = " " + detail[-1][:120] if detail else ""
-            reasons.append("command: no-output{}".format(suffix))
+            reasons.append("command: no-output")
         return None
     sanitized = _sanitize_summary(lines[-1])
     if not sanitized and reasons is not None:
@@ -330,6 +346,7 @@ __all__ = [
     "_read_stream_lines",
     "_sanitize_summary",
     "_stop_subprocess",
+    "_positive_finite_timeout",
     "build_prompt",
     "codex_summary",
     "command_summary",

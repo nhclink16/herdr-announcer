@@ -1,5 +1,6 @@
 import io
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -122,6 +123,41 @@ class CliRoutingTests(unittest.TestCase):
 
 
 class OrchestrationTests(unittest.TestCase):
+    @mock.patch.object(announce.subprocess, "run")
+    def test_failed_speech_command_never_persists_its_secret_argv(self, run):
+        secret = "sentinel-speech-secret"
+        run.side_effect = subprocess.CalledProcessError(
+            23, ["speaker", "--token", secret]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_dir = root / "config"
+            state_dir = root / "state"
+            config_dir.mkdir()
+            (config_dir / "config.toml").write_text(
+                'summary = "template"\n'
+                'speak_command = ["speaker", "--token", "{}"]\n'.format(secret),
+                encoding="utf-8",
+            )
+            environment = {
+                "HERDR_PLUGIN_CONFIG_DIR": str(config_dir),
+                "HERDR_PLUGIN_STATE_DIR": str(state_dir),
+            }
+
+            with mock.patch.dict(os.environ, environment, clear=False), mock.patch.object(
+                announce.sys, "stderr", io.StringIO()
+            ):
+                result = announce.main(["--test"])
+
+            persisted = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in (state_dir / "announcer.log", state_dir / "last-error.json")
+            )
+
+        self.assertEqual(result, 1)
+        self.assertNotIn(secret, persisted)
+        self.assertIn("speak-command: exit-23", persisted)
+
     def test_template_mode_never_invokes_codex_fallback(self):
         config = dict(announce.DEFAULTS)
         config["summary"] = "template"
