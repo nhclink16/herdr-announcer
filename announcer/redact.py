@@ -21,11 +21,14 @@ _HEADER_SECRET_RE = re.compile(
 _QUERY_SECRET_RE = re.compile(
     r"(?i)([?&](?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password)=)([^&\s]+)"
 )
+_ASSIGNMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def mask_secret(value: str) -> str:
     """Keep a secret's tail recognizable without exposing the value."""
-    return "****{}".format(value[-4:]) if value else ""
+    if not value:
+        return ""
+    return "****{}".format(value[-4:]) if len(value) > 4 else "****"
 
 
 def _is_sensitive_name(value: str) -> bool:
@@ -50,10 +53,15 @@ def _redact_embedded(value: str) -> Tuple[str, List[str]]:
 
 
 def _redact_command(command: Sequence[str]) -> Tuple[List[str], List[str]]:
+    if not command:
+        return [], []
     redacted: List[str] = []
     secrets: List[str] = []
     mask_next = False
-    for argument in command:
+    for index, argument in enumerate(command):
+        if index == 0:
+            redacted.append(argument)
+            continue
         if mask_next:
             redacted.append(mask_secret(argument))
             secrets.append(argument)
@@ -62,16 +70,19 @@ def _redact_command(command: Sequence[str]) -> Tuple[List[str], List[str]]:
 
         if "=" in argument:
             name, value = argument.split("=", 1)
-            if _is_sensitive_name(name):
+            if name.startswith("-") or _ASSIGNMENT_NAME_RE.match(name):
                 redacted.append("{}={}".format(name, mask_secret(value)))
                 secrets.append(value)
                 continue
 
-        embedded, embedded_secrets = _redact_embedded(argument)
-        redacted.append(embedded)
-        secrets.extend(embedded_secrets)
-        if _is_sensitive_name(argument):
-            mask_next = True
+        if argument.startswith("-"):
+            redacted.append(argument)
+            if _is_sensitive_name(argument):
+                mask_next = True
+            continue
+
+        redacted.append(mask_secret(argument))
+        secrets.append(argument)
     return redacted, secrets
 
 
