@@ -19,7 +19,7 @@ waiting for you.
 
 </div>
 
-![setup wizard demo](assets/demo.gif)
+![announcer dashboard](assets/dashboard.gif)
 
 🔊 [What it sounds like](assets/sample-announcement.m4a) — *"Builder finished
 mid-cycle proration in billing-api, all fourteen invoice tests passed,
@@ -40,6 +40,16 @@ text-to-speech.
 > [!TIP]
 > No codex? Nothing breaks — you get instant template phrasing instead of
 > an LLM sentence.
+
+Open the control panel — recent announcements with their reasons, snooze
+(5m / 30m / 2h / until tomorrow), toggles, and a voice test, every control
+also available as a palette action:
+
+```bash
+herdr plugin pane open --plugin nhclink16.announcer --entrypoint dashboard
+```
+
+![setup wizard demo](assets/demo.gif)
 
 Tailor it with the wizard, then test the voice:
 
@@ -75,6 +85,9 @@ description = "announcer status"
 
 ## Features
 
+- **A dashboard in a popup** — snooze, toggles, the recent-announcement
+  log with failure reasons, and a voice test, one keybind away; agents can
+  drive every control through `herdr plugin action invoke`
 - **Real summaries, not "task complete"** — one spoken sentence generated
   from the tail of the agent's terminal output, by sandboxed `codex exec`,
   any CLI LLM, or instant template phrasing with no LLM at all
