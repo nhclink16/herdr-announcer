@@ -2265,8 +2265,19 @@ class RegressionTests(DashboardTestCase):
 
         board.refresh()
 
+        # The frame must survive regardless of parser. The message depends on
+        # it: tomllib (3.11+) raises on the corrupt line, so the dashboard
+        # reports the config unreadable; the tiny-TOML fallback on older
+        # interpreters deliberately skips bad lines instead of raising (so a
+        # corrupt config can never mute announcements), and then there is no
+        # unreadable condition to report.
         self.assertEqual(len(board.render()), dashboard.FRAME_HEIGHT)
-        self.assertEqual(board.message, dashboard.CONFIG_UNREADABLE)
+        try:
+            import tomllib  # noqa: F401
+        except ImportError:
+            self.assertEqual(board.message, "")
+        else:
+            self.assertEqual(board.message, dashboard.CONFIG_UNREADABLE)
 
     def test_config_writes_print_nothing_to_stdout(self):
         holder = kit_holder("_write_config")
