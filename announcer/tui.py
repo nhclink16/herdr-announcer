@@ -15,16 +15,16 @@ except ImportError:  # non-Unix
     tty = None  # type: ignore
 
 
-def _tty_active() -> bool:
+def tty_active() -> bool:
     return termios is not None and sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def _c(text: str, code: str) -> str:
+def colorize(text: str, code: str) -> str:
     return "\x1b[{}m{}\x1b[0m".format(code, text)
 
 
 @contextmanager
-def _raw_mode() -> Iterator[None]:
+def raw_mode() -> Iterator[None]:
     """Hold raw mode for a whole widget loop so buffered keys never get
     cooked-mode line buffering between reads."""
     fd = sys.stdin.fileno()
@@ -36,7 +36,7 @@ def _raw_mode() -> Iterator[None]:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def _read_key() -> str:
+def read_key() -> str:
     """Read one keypress; assumes raw mode. Arrows return 'up'/'down'."""
     fd = sys.stdin.fileno()
     ch = os.read(fd, 1).decode("utf-8", "ignore")
@@ -53,7 +53,7 @@ def _read_key() -> str:
     return ch
 
 
-def _frame(lines: List[str], previous_height: int) -> int:
+def frame(lines: List[str], previous_height: int) -> int:
     """Redraw a widget frame in place; returns the new frame height."""
     out = sys.stdout
     if previous_height:
@@ -64,29 +64,29 @@ def _frame(lines: List[str], previous_height: int) -> int:
     return len(lines)
 
 
-def _collapse(height: int, title: str, answer: str) -> None:
+def collapse(height: int, title: str, answer: str) -> None:
     sys.stdout.write("\x1b[{}A".format(height))
     for _unused in range(height):
         sys.stdout.write("\r\x1b[2K\n")
     sys.stdout.write("\x1b[{}A".format(height))
     sys.stdout.write(
         "\r\x1b[2K"
-        + _c("◇", "90")
+        + colorize("◇", "90")
         + " "
-        + _c(title, "90")
-        + _c(" · ", "90")
-        + _c(answer, "36")
+        + colorize(title, "90")
+        + colorize(" · ", "90")
+        + colorize(answer, "36")
         + "\n"
     )
     sys.stdout.flush()
 
 
-def _hide_cursor() -> None:
+def hide_cursor() -> None:
     sys.stdout.write("\x1b[?25l")
     sys.stdout.flush()
 
 
-def _show_cursor() -> None:
+def show_cursor() -> None:
     sys.stdout.write("\x1b[?25h")
     sys.stdout.flush()
 
@@ -98,7 +98,7 @@ def ask_select(
     hint: str = "",
 ) -> Tuple[str, bool]:
     """options: (value, label). Returns (value, changed-from-default)."""
-    if not _tty_active():
+    if not tty_active():
         print(title)
         choices: Dict[str, str] = {}
         for index, (value, label) in enumerate(options, 1):
@@ -114,29 +114,29 @@ def ask_select(
         0,
     )
     height = 0
-    _hide_cursor()
+    hide_cursor()
     try:
-        with _raw_mode():
+        with raw_mode():
             while True:
-                lines = [_c("◆", "36") + " " + _c(title, "1")]
+                lines = [colorize("◆", "36") + " " + colorize(title, "1")]
                 if hint:
-                    lines.append(_c("│", "90") + "  " + _c(hint, "90"))
+                    lines.append(colorize("│", "90") + "  " + colorize(hint, "90"))
                 for i, (_unused, label) in enumerate(options):
                     if i == index:
                         lines.append(
-                            _c("│", "90")
+                            colorize("│", "90")
                             + "  "
-                            + _c("●", "36")
+                            + colorize("●", "36")
                             + " "
-                            + _c(label, "1")
+                            + colorize(label, "1")
                         )
                     else:
                         lines.append(
-                            _c("│", "90") + "  " + _c("○ " + label, "90")
+                            colorize("│", "90") + "  " + colorize("○ " + label, "90")
                         )
-                lines.append(_c("└", "90"))
-                height = _frame(lines, height)
-                key = _read_key()
+                lines.append(colorize("└", "90"))
+                height = frame(lines, height)
+                key = read_key()
                 if key in ("up", "k"):
                     index = (index - 1) % len(options)
                 elif key in ("down", "j", "\t"):
@@ -145,12 +145,12 @@ def ask_select(
                     index = int(key) - 1
                 elif key in ("\r", "\n"):
                     value, label = options[index]
-                    _collapse(height, title, label.split("  ")[0].strip())
+                    collapse(height, title, label.split("  ")[0].strip())
                     return value, value != default_value
                 elif key == "\x03":
                     raise KeyboardInterrupt
     finally:
-        _show_cursor()
+        show_cursor()
 
 
 def ask_multiselect(
@@ -159,7 +159,7 @@ def ask_multiselect(
     default_selected: Sequence[str],
     hint: str = "space toggles, enter confirms",
 ) -> Tuple[List[str], bool]:
-    if not _tty_active():
+    if not tty_active():
         while True:
             value, explicit = _prompt(
                 title + " (comma list)", ",".join(default_selected)
@@ -173,20 +173,20 @@ def ask_multiselect(
     selected = {value for value in default_selected}
     index = 0
     height = 0
-    _hide_cursor()
+    hide_cursor()
     try:
-        with _raw_mode():
+        with raw_mode():
             while True:
-                lines = [_c("◆", "36") + " " + _c(title, "1")]
-                lines.append(_c("│", "90") + "  " + _c(hint, "90"))
+                lines = [colorize("◆", "36") + " " + colorize(title, "1")]
+                lines.append(colorize("│", "90") + "  " + colorize(hint, "90"))
                 for i, (value, label) in enumerate(options):
-                    box = _c("◼", "36") if value in selected else _c("◻", "90")
-                    cursor = _c("❯", "36") if i == index else " "
-                    text = _c(label, "1") if i == index else _c(label, "90")
-                    lines.append(_c("│", "90") + " " + cursor + box + " " + text)
-                lines.append(_c("└", "90"))
-                height = _frame(lines, height)
-                key = _read_key()
+                    box = colorize("◼", "36") if value in selected else colorize("◻", "90")
+                    cursor = colorize("❯", "36") if i == index else " "
+                    text = colorize(label, "1") if i == index else colorize(label, "90")
+                    lines.append(colorize("│", "90") + " " + cursor + box + " " + text)
+                lines.append(colorize("└", "90"))
+                height = frame(lines, height)
+                key = read_key()
                 if key in ("up", "k"):
                     index = (index - 1) % len(options)
                 elif key in ("down", "j", "\t"):
@@ -201,16 +201,16 @@ def ask_multiselect(
                     if not selected:
                         continue
                     ordered = [v for v, _unused in options if v in selected]
-                    _collapse(height, title, ", ".join(ordered))
+                    collapse(height, title, ", ".join(ordered))
                     return ordered, set(ordered) != set(default_selected)
                 elif key == "\x03":
                     raise KeyboardInterrupt
     finally:
-        _show_cursor()
+        show_cursor()
 
 
 def ask_confirm(title: str, default: bool) -> Tuple[bool, bool]:
-    if not _tty_active():
+    if not tty_active():
         return _prompt_yes_no(title, default)
     value, changed = ask_select(
         title, [("yes", "Yes"), ("no", "No")], "yes" if default else "no"
@@ -223,16 +223,16 @@ def ask_text(
     title: str, default: str, display_default: Optional[str] = None
 ) -> Tuple[str, bool]:
     """Line input, styled on a TTY. Enter keeps the default."""
-    if not _tty_active():
+    if not tty_active():
         value, explicit = _prompt(title, display_default or default)
         if display_default is not None and value == display_default:
             return default, False
         return value, explicit
     shown = display_default if display_default is not None else default
-    print(_c("◆", "36") + " " + _c(title, "1"))
+    print(colorize("◆", "36") + " " + colorize(title, "1"))
     try:
         raw = input(
-            _c("│", "90") + "  " + _c("[{}]".format(shown), "90") + " > "
+            colorize("│", "90") + "  " + colorize("[{}]".format(shown), "90") + " > "
         )
     except EOFError:
         raw = ""
@@ -247,7 +247,7 @@ def ask_text(
         summary = "(updated)"
     else:
         summary = result
-    _collapse(2, title, str(summary) if summary else "(blank)")
+    collapse(2, title, str(summary) if summary else "(blank)")
     return result, explicit
 
 
@@ -296,6 +296,19 @@ def _prompt_yes_no(label: str, default: bool) -> Tuple[bool, bool]:
         print("Please enter yes or no.")
 
 
+# Compatibility aliases. These names were imported through announce.py before
+# the package split, so keep them indefinitely even though new code should use
+# the descriptive public API above.
+_tty_active = tty_active
+_c = colorize
+_raw_mode = raw_mode
+_read_key = read_key
+_frame = frame
+_collapse = collapse
+_hide_cursor = hide_cursor
+_show_cursor = show_cursor
+
+
 __all__ = [
     "_c",
     "_collapse",
@@ -313,6 +326,14 @@ __all__ = [
     "ask_secret",
     "ask_select",
     "ask_text",
+    "collapse",
+    "colorize",
+    "frame",
+    "hide_cursor",
+    "raw_mode",
+    "read_key",
+    "show_cursor",
     "termios",
     "tty",
+    "tty_active",
 ]

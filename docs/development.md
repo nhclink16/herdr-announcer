@@ -6,9 +6,13 @@
 announce.py       entrypoint + orchestration; a thin facade over announcer/
 announcer/
   config.py       defaults, TOML loading (tomllib, tiny-TOML fallback on 3.9)
+  config_io.py    compatibility-safe config editing for noninteractive UIs
   herdr.py        Herdr CLI client, event parsing
+  log.py          invocation log writing and tail parsing
+  paths.py        config/state directory resolution outside Herdr
   summarize.py    template / codex / command summarizers, sanitizer
   speech.py       TTS backends, ElevenLabs, playback + debounce locks
+  snooze.py       snooze state, duration parsing, and labels
   deadline.py     the shared two-phase timeout machine
   tui.py          raw-terminal widget kit
   wizard.py       setup wizard

@@ -113,8 +113,8 @@ class WizardFlowTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch.object(wizard, "_capabilities", return_value=capabilities), mock.patch.object(
-                wizard, "_tty_active", return_value=False
+            with mock.patch.object(wizard, "capabilities", return_value=capabilities), mock.patch.object(
+                wizard, "tty_active", return_value=False
             ), mock.patch.object(
                 wizard, "ask_multiselect", return_value=(["done", "blocked"], False)
             ), mock.patch.object(

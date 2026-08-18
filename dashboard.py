@@ -3,9 +3,6 @@
 
 # ---- section A: helpers, log, snooze, config, capabilities ----------------
 
-import io
-import json
-import math
 import os
 import platform
 import select
@@ -13,11 +10,9 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from contextlib import contextmanager, redirect_stdout
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -25,24 +20,46 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-try:
-    from announcer import tui as kit
-except ImportError:  # pre-refactor layout: the kit still lives in announce
-    import announce as kit
-import announce as core
+from announcer import tui as kit
+from announcer.config import DEFAULTS, load_config
+from announcer.config_io import (
+    STATE_ORDER,
+    announce_states,
+    config_path,
+    load_config_safely,
+    write_config_keys,
+)
+from announcer.log import (
+    LOG_SCAN_BYTES,
+    LOG_SCAN_ENTRIES,
+    LogEntry,
+    parse_log_line,
+    read_log,
+)
+from announcer.paths import (
+    PLUGIN_ID,
+    _resolve_dirs_without_env,
+    local_plugin_dirs,
+)
+from announcer.snooze import (
+    SNOOZE_HOUR,
+    SNOOZE_STEPS,
+    format_snooze_remaining,
+    next_morning,
+    next_snooze_step,
+    parse_duration,
+    read_snooze,
+    set_snooze,
+    snooze_active,
+    snooze_label,
+    snooze_message,
+    snooze_path,
+    snooze_step,
+    snooze_target_label,
+    write_snooze,
+)
 
 
-def _kit_attr(name: str) -> Any:
-    """Resolve a kit function at call time, tolerating the coming refactor."""
-    value = getattr(kit, name, None)
-    if value is None:
-        value = getattr(core, name, None)
-    if value is None:
-        raise AttributeError("announcer kit is missing {}".format(name))
-    return value
-
-
-PLUGIN_ID = getattr(core, "PLUGIN_ID", "nhclink16.announcer")
 PYTHON = sys.executable or "python3"
 
 WIDTH = 86                  # widest content line, inside the plugin popup
@@ -54,12 +71,9 @@ MIN_FRAME = MIN_HEIGHT - 1  # frame rows at that floor (one row is the cursor);
 POPUP_COLUMNS = 94          # herdr-plugin.toml [[panes]] width ...
 POPUP_LINES = 30            # ... and height; also the unmeasurable fallback
 RECENT_LINES = 5            # log rows shown
-LOG_SCAN_BYTES = 65536      # only the tail of announcer.log is read
-LOG_SCAN_ENTRIES = 200      # entries parsed from that tail before trimming
 TICK_SECONDS = 1.0          # repaint cadence when no key arrives
 MESSAGE_SECONDS = 5.0       # a transient message ages out of the frame
 
-STATE_ORDER = ("done", "blocked", "idle", "working", "unknown")
 STATE_HELP = {
     "done": "an agent finished work you weren't watching",
     "blocked": "an agent is waiting on your input",
@@ -72,14 +86,12 @@ CAPABILITY_NAMES = ("codex", "claude", "say", "spd-say", "espeak-ng", "espeak")
 # only speech binary on a modern Debian/Arch box, and omitting it made such a
 # machine report "nothing detected!" while the announcer spoke happily
 VOICE_TOOLS = ("spd-say", "espeak-ng", "espeak")
-SNOOZE_STEPS = ("5m", "30m", "2h", "tomorrow", "off")
-SNOOZE_HOUR = 8             # "tomorrow" means the next local 08:00
 CONFIG_UNREADABLE = "config unreadable - showing the last good values"
 TOO_SMALL = "announcer dashboard: terminal too small ({}x{}, need {}x{})"
 
 # The full key map needs 90 columns, which is why the popup asks for
 # POPUP_COLUMNS. A narrower terminal gets a shorter map instead of a wrapped
-# line: kit._frame counts logical lines, so one wrap makes the frame walk.
+# line: kit.frame counts logical lines, so one wrap makes the frame walk.
 FOOTER = (
     "j/k or arrows move · space/enter toggle · s snooze · t test"
     " · w wizard · r reload · q quit"
@@ -160,96 +172,7 @@ def _plain(text: str) -> str:
 
 def _label(text: str, focused: bool) -> str:
     """Bold when focused, untouched otherwise."""
-    return kit._c(text, "1") if focused else text
-
-
-@dataclass
-class LogEntry:
-    timestamp: str            # raw first token, e.g. "2026-08-17T12:04:11+02:00"
-    pane_id: str              # "-" when absent
-    status: str               # "-" when absent
-    action: str               # required for a line to parse at all
-    elapsed: float            # 0.0 when absent or unparseable
-    reasons: List[str] = field(default_factory=list)
-    raw: str = ""
-
-
-def parse_log_line(line: str) -> Optional[LogEntry]:
-    """Parse one announcer.log line. Returns None for anything that is not an
-    invocation record (blank lines, traceback text, future junk)."""
-    raw = line.rstrip("\n")
-    if not raw.strip():
-        return None
-    # `reasons=` is documented as the LAST field and its parts legitimately
-    # contain spaces ("playback-lock: timeout"), so it is split off the raw
-    # line before the prefix is tokenised - never token by token.
-    head, marker, tail = raw.partition(" reasons=")
-    reasons: List[str] = []
-    if marker:
-        reasons = [part.strip() for part in tail.split(";") if part.strip()]
-    tokens = head.split()
-    # tracebacks never carry an action= token, so this is the record test
-    if not any(token.startswith("action=") for token in tokens):
-        return None
-    timestamp = tokens[0] if tokens and "=" not in tokens[0] else ""
-    pane_id = "-"
-    status = "-"
-    action = ""
-    elapsed = 0.0
-    for token in tokens[1:] if timestamp else tokens:
-        if "=" not in token:
-            continue
-        key, value = token.split("=", 1)
-        if key == "pane_id":
-            pane_id = value
-        elif key == "status":
-            status = value
-        elif key == "action":
-            action = value
-        elif key == "elapsed":
-            try:
-                elapsed = float(value)
-            except (TypeError, ValueError):
-                elapsed = 0.0
-        elif key == "reasons" and not reasons:
-            # only reachable for a malformed line that repeats the field
-            reasons = [part for part in value.split(";") if part]
-    return LogEntry(
-        timestamp=timestamp,
-        pane_id=pane_id,
-        status=status,
-        action=action,
-        elapsed=elapsed,
-        reasons=reasons,
-        raw=raw,
-    )
-
-
-def read_log(path: Path, limit: int = RECENT_LINES) -> List[LogEntry]:
-    """Return up to `limit` entries, OLDEST FIRST, from the tail of the log."""
-    try:
-        size = path.stat().st_size
-        with path.open("rb") as handle:
-            start = max(0, size - LOG_SCAN_BYTES)
-            handle.seek(start)
-            blob = handle.read()
-    except OSError:
-        return []
-    text = blob.decode("utf-8", errors="replace")
-    lines = text.splitlines()
-    if start and lines:
-        # the first line is almost certainly cut in half by the seek
-        lines = lines[1:]
-    entries: List[LogEntry] = []
-    for line in lines:
-        entry = parse_log_line(line)
-        if entry is not None:
-            entries.append(entry)
-        if len(entries) >= LOG_SCAN_ENTRIES:
-            entries = entries[-LOG_SCAN_ENTRIES:]
-    if limit <= 0:
-        return []
-    return entries[-limit:]
+    return kit.colorize(text, "1") if focused else text
 
 
 def format_timestamp(timestamp: str) -> str:
@@ -261,210 +184,9 @@ def format_timestamp(timestamp: str) -> str:
     return text.split("T", 1)[1][:8]
 
 
-def snooze_path(state_dir: Path) -> Path:
-    return Path(state_dir) / "snooze.json"
-
-
-def read_snooze(state_dir: Path, now: Optional[float] = None) -> float:
-    """Active deadline as a unix epoch float, or 0.0 when snooze is off,
-    expired, or the file is unreadable/corrupt. Never raises."""
-    moment = time.time() if now is None else now
-    try:
-        with snooze_path(state_dir).open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        until = float(payload.get("until") or 0)
-    except (OSError, ValueError, TypeError, AttributeError):
-        return 0.0
-    if not math.isfinite(until):
-        # json accepts Infinity/NaN; an infinite deadline would mute the
-        # plugin forever and overflow the countdown formatter. Treat it as
-        # corruption, which the schema says means off.
-        return 0.0
-    if until > moment:
-        return until
-    return 0.0
-
-
-def snooze_active(state_dir: Path, now: Optional[float] = None) -> bool:
-    return read_snooze(state_dir, now) > 0.0
-
-
-def write_snooze(state_dir: Path, until: float) -> None:
-    """Atomically write {"until": float(until)}, mirroring the debounce state
-    writer. Writing 0.0 is how 'off' is stored - the file is kept."""
-    directory = Path(state_dir)
-    directory.mkdir(parents=True, exist_ok=True)
-    temporary_name = ""
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=str(directory),
-            prefix="snooze.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temporary_name = handle.name
-            json.dump({"until": float(until)}, handle, separators=(",", ":"))
-            handle.write("\n")
-        os.replace(temporary_name, str(snooze_path(directory)))
-        temporary_name = ""
-    finally:
-        if temporary_name:
-            try:
-                os.unlink(temporary_name)
-            except FileNotFoundError:
-                pass
-
-
-def next_morning(now: Optional[float] = None) -> float:
-    """Epoch of the next local SNOOZE_HOUR:00 strictly after `now` - what the
-    'tomorrow' snooze step means. Computed at 23:59 this lands on the NEXT
-    day's 08:00; computed at 07:00 it is this morning's, an hour away, which is
-    the honest reading of "until tomorrow" for someone who is still up.
-    The day is stepped with a date arithmetic rather than +86400 so a DST
-    change still leaves the deadline at 08:00 wall clock."""
-    moment = time.time() if now is None else now
-    local = datetime.fromtimestamp(moment)
-    target = local.replace(hour=SNOOZE_HOUR, minute=0, second=0, microsecond=0)
-    if target <= local:
-        target = (local + timedelta(days=1)).replace(
-            hour=SNOOZE_HOUR, minute=0, second=0, microsecond=0
-        )
-    return target.timestamp()
-
-
-def parse_duration(spec: str) -> Optional[float]:
-    """'off'/'0'/'none' -> 0.0; '<int><unit>' with unit s|m|h -> seconds;
-    a bare integer -> seconds. Anything else -> None. 'tomorrow' is NOT a
-    duration - it is a wall-clock target and set_snooze resolves it."""
-    text = str(spec).strip().lower()
-    if not text:
-        return None
-    if text in ("off", "0", "none"):
-        return 0.0
-    units = {"s": 1, "m": 60, "h": 3600}
-    multiplier = units.get(text[-1])
-    if multiplier is None:
-        multiplier = 1
-        number = text
-    else:
-        number = text[:-1]
-    if not number.isdigit():
-        return None
-    return float(int(number) * multiplier)
-
-
-def set_snooze(
-    state_dir: Path, spec: str, now: Optional[float] = None
-) -> Optional[float]:
-    """Resolve `spec` - a SNOOZE_STEPS name or any parse_duration spec - and
-    persist the resulting deadline. The stored schema is unchanged: a single
-    {"until": epoch}, so 'tomorrow' is resolved to its epoch here."""
-    moment = time.time() if now is None else now
-    if str(spec).strip().lower() == "tomorrow":
-        until = next_morning(moment)
-        write_snooze(state_dir, until)
-        return until
-    seconds = parse_duration(spec)
-    if seconds is None:
-        return None
-    if seconds <= 0:
-        write_snooze(state_dir, 0.0)
-        return 0.0
-    until = moment + seconds
-    write_snooze(state_dir, until)
-    return until
-
-
-def format_snooze_remaining(until: float, now: Optional[float] = None) -> str:
-    moment = time.time() if now is None else now
-    try:
-        remaining = float(until) - moment
-    except (TypeError, ValueError):
-        return "off"
-    if remaining <= 0:
-        return "off"
-    total = int(remaining)
-    if total >= 3600:
-        return "{}h {:02d}m left".format(total // 3600, (total % 3600) // 60)
-    if total >= 60:
-        return "{}m {:02d}s left".format(total // 60, total % 60)
-    return "{}s left".format(total)
-
-
-def snooze_step(until: float, now: Optional[float] = None) -> str:
-    """Which SNOOZE_STEPS option a stored deadline came from. snooze.json holds
-    only the epoch, so the step is inferred: a deadline landing exactly on the
-    local SNOOZE_HOUR reads as 'tomorrow', everything else falls into the
-    nearest duration bucket by time remaining."""
-    moment = time.time() if now is None else now
-    try:
-        remaining = float(until) - moment
-    except (TypeError, ValueError):
-        return "off"
-    if not math.isfinite(remaining) or remaining <= 0:
-        return "off"
-    try:
-        stamp = time.localtime(float(until))
-    except (OSError, OverflowError, ValueError):
-        stamp = None
-    if (
-        stamp is not None
-        and stamp.tm_hour == SNOOZE_HOUR
-        and stamp.tm_min == 0
-        and stamp.tm_sec == 0
-    ):
-        return "tomorrow"
-    if remaining <= 300:
-        return "5m"
-    if remaining <= 1800:
-        return "30m"
-    return "2h"
-
-
-def next_snooze_step(until: float, now: Optional[float] = None) -> str:
-    """The option after the current one, cycling in SNOOZE_STEPS order:
-    5m -> 30m -> 2h -> tomorrow -> off -> 5m."""
-    position = SNOOZE_STEPS.index(snooze_step(until, now))
-    return SNOOZE_STEPS[(position + 1) % len(SNOOZE_STEPS)]
-
-
-def snooze_target_label(until: float) -> str:
-    """'until 08:00' - the wall clock a 'tomorrow' snooze runs to."""
-    try:
-        return "until " + time.strftime("%H:%M", time.localtime(float(until)))
-    except (OSError, OverflowError, TypeError, ValueError):
-        return "until tomorrow"
-
-
-def snooze_label(until: float, now: Optional[float] = None) -> str:
-    """The snooze row's value: the active choice plus the time left, e.g.
-    'off', '30m · 29m 12s left', 'until 08:00 · 9h 12m left'."""
-    step = snooze_step(until, now)
-    if step == "off":
-        return "off"
-    head = snooze_target_label(until) if step == "tomorrow" else step
-    return head + " · " + format_snooze_remaining(until, now)
-
-
-def snooze_message(until: float, now: Optional[float] = None) -> str:
-    """The confirmation shown after cycling the snooze."""
-    step = snooze_step(until, now)
-    if step == "off":
-        return "snooze off"
-    if step == "tomorrow":
-        return "snoozed " + snooze_target_label(until)
-    return "snoozed · " + format_snooze_remaining(until, now)
-
-
 def _local_resolve_dirs() -> Tuple[Path, Path]:
     """Last-resort literals, no subprocess."""
-    config_dir = (
-        Path.home() / ".config" / "herdr" / "plugins" / "config" / PLUGIN_ID
-    )
-    state_dir = Path.home() / ".local" / "state" / "herdr" / "plugins" / PLUGIN_ID
-    return config_dir, state_dir
+    return local_plugin_dirs()
 
 
 def resolve_dirs() -> Tuple[Path, Path]:
@@ -474,12 +196,7 @@ def resolve_dirs() -> Tuple[Path, Path]:
     state_value = os.environ.get("HERDR_PLUGIN_STATE_DIR") or ""
     if config_value and state_value:
         return Path(config_value), Path(state_value)
-    # the underscore resolver may vanish in the announcer package refactor
-    resolver = getattr(core, "_resolve_dirs_without_env", None)
-    if callable(resolver):
-        fallback_config, fallback_state = resolver()
-    else:
-        fallback_config, fallback_state = _local_resolve_dirs()
+    fallback_config, fallback_state = _resolve_dirs_without_env()
     return (
         Path(config_value) if config_value else Path(fallback_config),
         Path(state_value) if state_value else Path(fallback_state),
@@ -487,53 +204,8 @@ def resolve_dirs() -> Tuple[Path, Path]:
 
 
 def capabilities() -> Dict[str, Optional[str]]:
-    """Local copy of the capability probe: core._capabilities may disappear."""
+    """Capability subset displayed by the dashboard."""
     return {name: shutil.which(name) for name in CAPABILITY_NAMES}
-
-
-def config_path(config_dir: Path) -> Path:
-    return Path(config_dir) / "config.toml"
-
-
-def write_config_keys(
-    config_dir: Path, updates: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Merge `updates` into the on-disk config and persist through the kit."""
-    path = config_path(config_dir)
-    raw = _kit_attr("_load_raw_config")(path)
-    config = core.load_config(config_dir)
-    config.update(updates)
-    # keys already on disk stay "chosen" so a value equal to its default is
-    # not silently dropped from the user's file
-    chosen = sorted({key for key in raw if key in core.DEFAULTS} | set(updates))
-    # the refactored kit's _write_config prints a "does not preserve comments"
-    # note; the dashboard owns every column of its frame, so that line must
-    # never reach the terminal and desynchronise _frame's cursor arithmetic
-    with redirect_stdout(io.StringIO()):
-        _kit_attr("_write_config")(path, config, chosen)
-    return config
-
-
-def load_config_safely(config_dir: Path) -> Optional[Dict[str, Any]]:
-    """core.load_config, or None when config.toml is corrupt or unreadable.
-    A hand-edited file must never tear down a running dashboard."""
-    try:
-        return core.load_config(config_dir)
-    except Exception:
-        return None
-
-
-def announce_states(config: Dict[str, Any]) -> List[str]:
-    """config['announce'] normalised into STATE_ORDER order."""
-    value = config.get("announce")
-    if not isinstance(value, list):
-        return []
-    picked = {
-        item.lower()
-        for item in value
-        if isinstance(item, str) and item.lower() in STATE_ORDER
-    }
-    return [state for state in STATE_ORDER if state in picked]
 
 
 def voice_backend_label(
@@ -578,7 +250,7 @@ def measure_terminal() -> Tuple[int, int]:
 def footer_text(width: int) -> str:
     """The widest key map that fits `width` columns. The full map needs 90
     columns; a narrower terminal gets a shorter one rather than a wrapped
-    line, because kit._frame's cursor-up count is in LOGICAL lines and one
+    line, because kit.frame's cursor-up count is in LOGICAL lines and one
     wrap makes every repaint walk down the screen."""
     for text in (FOOTER, FOOTER_COMPACT, FOOTER_MINIMAL):
         if len(text) <= width:
@@ -638,9 +310,9 @@ class Dashboard:
         # the one switch for "may I touch the real terminal": raw mode, cursor
         # hiding and exec are all gated on it, so injected io is always safe
         self.owns_terminal = (
-            read_key is None and write is None and kit._tty_active()
+            read_key is None and write is None and kit.tty_active()
         )
-        self.read_key = kit._read_key if read_key is None else read_key
+        self.read_key = kit.read_key if read_key is None else read_key
         if write is None:
             self.write = sys.stdout.write
             self.flush = sys.stdout.flush if flush is None else flush
@@ -660,7 +332,7 @@ class Dashboard:
         self.too_small = False
         self.measure()
         loaded = load_config_safely(self.config_dir)
-        self.config = dict(core.DEFAULTS) if loaded is None else loaded
+        self.config = dict(DEFAULTS) if loaded is None else loaded
         self.entries: List[LogEntry] = []
         self.snooze_until = 0.0
         self.index = 0
@@ -686,7 +358,7 @@ class Dashboard:
 
     def measure(self) -> None:
         """Fit the frame to the terminal; called at construction and on 'r'.
-        kit._frame moves the cursor up by a count of LOGICAL lines, so a line
+        kit.frame moves the cursor up by a count of LOGICAL lines, so a line
         that wraps or a frame taller than the window makes every repaint walk
         down the screen - the clamp is what keeps an 80x24 terminal steady."""
         self.columns, self.lines = measure_terminal()
@@ -705,7 +377,7 @@ class Dashboard:
 
     def _paint(self, lines: List[str]) -> None:
         with self._stdout():
-            self.height = kit._frame(lines, self.height)
+            self.height = kit.frame(lines, self.height)
 
     def render(self) -> List[str]:
         """Build the frame from self.* only - no io, exactly self.frame_height
@@ -719,7 +391,7 @@ class Dashboard:
                 self.columns, self.lines, MIN_WIDTH, MIN_HEIGHT
             )]
         width = self.width
-        rail = kit._c("│", "90")
+        rail = kit.colorize("│", "90")
         states = announce_states(self.config)
         # line indices that may be dropped, in the order they may go, when the
         # terminal is too short for the whole frame
@@ -729,29 +401,29 @@ class Dashboard:
         last_resort: List[int] = []
 
         def cursor(position):
-            return kit._c("❯", "36") if self.index == position else " "
+            return kit.colorize("❯", "36") if self.index == position else " "
 
         def box(on):
-            return kit._c("◼", "36") if on else kit._c("◻", "90")
+            return kit.colorize("◼", "36") if on else kit.colorize("◻", "90")
 
         if not states:
-            badge = kit._c("silent · no states selected", "31")
+            badge = kit.colorize("silent · no states selected", "31")
         elif self.snooze_until > moment:
-            badge = kit._c(
+            badge = kit.colorize(
                 "snoozed · " + format_snooze_remaining(self.snooze_until, moment),
                 "33",
             )
         else:
-            badge = kit._c("live", "32")
+            badge = kit.colorize("live", "32")
 
         lines = [
-            kit._c("◆", "36") + " " + kit._c("Announcer", "1") + "  " + badge,
-            rail + "  " + kit._c(
+            kit.colorize("◆", "36") + " " + kit.colorize("Announcer", "1") + "  " + badge,
+            rail + "  " + kit.colorize(
                 _clip("config " + str(config_path(self.config_dir)), width - 3),
                 "90",
             ),
             rail,
-            rail + "  " + kit._c("Recent", "1"),
+            rail + "  " + kit.colorize("Recent", "1"),
         ]
         last_resort.append(1)                 # the config path line
         spacers.append(2)
@@ -761,7 +433,7 @@ class Dashboard:
         rows: List[str] = []
         if not recent:
             rows.append(
-                rail + "    " + kit._c("no announcements logged yet", "90")
+                rail + "    " + kit.colorize("no announcements logged yet", "90")
             )
         for entry in recent:
             text = "{}  {}  {}  {}".format(
@@ -778,7 +450,7 @@ class Dashboard:
                 code = "33"
             else:
                 code = "90"
-            rows.append(rail + "    " + kit._c(_clip(text, width - 5), code))
+            rows.append(rail + "    " + kit.colorize(_clip(text, width - 5), code))
         while len(rows) < RECENT_LINES:
             rows.append(rail)
         for position, row in enumerate(rows):
@@ -795,12 +467,12 @@ class Dashboard:
         lines.append(
             rail + " " + cursor(0) + " "
             + _label(_clip(text, 40), self.index == 0)
-            + "  " + kit._c(_clip(hint, max(0, width - 46)), "90")
+            + "  " + kit.colorize(_clip(hint, max(0, width - 46)), "90")
         )
 
         lines.append(rail)
         spacers.append(len(lines) - 1)
-        lines.append(rail + "  " + kit._c("Announce on", "1"))
+        lines.append(rail + "  " + kit.colorize("Announce on", "1"))
         for position, state in enumerate(STATE_ORDER):
             index = 1 + position
             text = _pad(state, 9) + STATE_HELP[state]
@@ -817,7 +489,7 @@ class Dashboard:
             + _label(_clip(text, width - 5), self.index == 6)
         )
         lines.append(
-            rail + "  " + _pad("voice", 9) + kit._c(
+            rail + "  " + _pad("voice", 9) + kit.colorize(
                 _clip(voice_backend_label(self.config, self.caps), width - 14),
                 "90",
             )
@@ -829,7 +501,7 @@ class Dashboard:
             cost = len(name) + 2 + (2 if parts else 0)
             if used + cost > width - 12:      # rail, gutter and the "tools" tag
                 break
-            mark = kit._c("✓", "32") if self.caps.get(name) else kit._c("✗", "90")
+            mark = kit.colorize("✓", "32") if self.caps.get(name) else kit.colorize("✗", "90")
             parts.append(name + " " + mark)
             used += cost
         lines.append(rail + "  " + _pad("tools", 9) + "  ".join(parts))
@@ -839,7 +511,7 @@ class Dashboard:
         lines.append(rail)
         spacers.append(len(lines) - 1)
         lines.append(
-            rail + " " + cursor(7) + kit._c("▸", "36") + " "
+            rail + " " + cursor(7) + kit.colorize("▸", "36") + " "
             + _label(
                 _clip(_pad("Test voice", 15)
                       + "speak a sample announcement now", width - 5),
@@ -847,7 +519,7 @@ class Dashboard:
             )
         )
         lines.append(
-            rail + " " + cursor(8) + kit._c("▸", "36") + " "
+            rail + " " + cursor(8) + kit.colorize("▸", "36") + " "
             + _label(
                 _clip(_pad("Full setup", 15)
                       + "open the setup wizard (replaces this screen)",
@@ -855,10 +527,10 @@ class Dashboard:
                 self.index == 8,
             )
         )
-        lines.append(kit._c("└", "90"))
-        lines.append(kit._c(footer_text(self.footer_width), "90"))
+        lines.append(kit.colorize("└", "90"))
+        lines.append(kit.colorize(footer_text(self.footer_width), "90"))
         lines.append(
-            kit._c(_clip(self.message, width), "36") if self.message else ""
+            kit.colorize(_clip(self.message, width), "36") if self.message else ""
         )
 
         spacers.reverse()                     # the lowest blank rail goes first
@@ -928,7 +600,7 @@ class Dashboard:
             self.message = "reloaded"
         elif key in ("q", "\x03", "\x04"):
             # ctrl-c quits cleanly: no half-written state to roll back.
-            # "esc" is NOT a quit key: kit._read_key returns it for every
+            # "esc" is NOT a quit key: kit.read_key returns it for every
             # escape sequence it does not recognise - Left/Right arrows,
             # Home/End, mouse and scroll-wheel reports - so binding quit to it
             # closed the popup at random under a stray scroll.
@@ -1107,13 +779,9 @@ class Dashboard:
         did nothing: the whole frame just sat there until execvpe repainted the
         screen, which on a slow wizard start is a visible second of confusion.
         """
-        try:
-            collapse = _kit_attr("_collapse")
-        except AttributeError:
-            collapse = None
-        if self.height and collapse is not None:
+        if self.height:
             with self._stdout():
-                collapse(self.height, "Announcer", answer)
+                kit.collapse(self.height, "Announcer", answer)
         else:
             self.write(answer + "\n")
             self.flush()
@@ -1121,10 +789,10 @@ class Dashboard:
 
     def run(self) -> int:
         if self.owns_terminal:
-            kit._hide_cursor()
+            kit.hide_cursor()
         try:
             if self.owns_terminal:
-                with kit._raw_mode():
+                with kit.raw_mode():
                     self._loop()
             else:
                 self._loop()
@@ -1132,7 +800,7 @@ class Dashboard:
                 self._collapse_frame("opening the setup wizard…")
         finally:
             if self.owns_terminal:
-                kit._show_cursor()
+                kit.show_cursor()
                 # the collapse already ended the frame with its own newline
                 if not self.wizard_requested:
                     self.write("\n")
@@ -1178,7 +846,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
         if not args:
-            if kit._tty_active():
+            if kit.tty_active():
                 if terminal_fits():
                     return Dashboard(config_dir, state_dir).run()
                 sys.stderr.write(
@@ -1202,7 +870,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 ))
             return 0
         if args == ["toggle-toast"]:
-            value = not bool(core.load_config(config_dir).get("toast"))
+            value = not bool(load_config(config_dir).get("toast"))
             write_config_keys(config_dir, {"toast": value})
             sys.stdout.write("toast on\n" if value else "toast off\n")
             return 0

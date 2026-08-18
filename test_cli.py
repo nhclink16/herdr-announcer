@@ -106,7 +106,7 @@ class CliRoutingTests(unittest.TestCase):
                     clear=False,
                 ), mock.patch.object(
                     announce,
-                    "_resolve_dirs_without_env",
+                    "resolve_dirs",
                     return_value=(config_dir, state_dir),
                 ), mock.patch.object(
                     announce, "process_invocation", return_value="announced+mock"

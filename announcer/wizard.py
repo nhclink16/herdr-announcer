@@ -10,16 +10,16 @@ from pathlib import Path
 from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
 
 from .config import DEFAULTS, _load_tiny_toml, load_config, tomllib
-from .speech import _capabilities, speak
+from .speech import capabilities, speak
 from .summarize import ANNOUNCEMENT_PROMPT
 from .tui import (
-    _c,
-    _tty_active,
     ask_confirm,
     ask_multiselect,
     ask_secret,
     ask_select,
     ask_text,
+    colorize,
+    tty_active,
 )
 
 
@@ -35,7 +35,7 @@ def _toml_value(value: Any) -> str:
     raise ValueError("cannot write configuration value")
 
 
-def _load_raw_config(path: Path) -> Dict[str, Any]:
+def load_raw_config(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
     try:
@@ -59,14 +59,14 @@ def _config_lines(
     ]
 
 
-def _write_config(
+def write_config(
     path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
 ) -> None:
     lines = _config_lines(config, explicitly_chosen)
     # Carry unknown keys forward so future plugin versions' settings survive.
     extras = {
         key: value
-        for key, value in _load_raw_config(path).items()
+        for key, value in load_raw_config(path).items()
         if key not in DEFAULTS
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,10 +134,10 @@ def _setup_wizard(
     existed = config_path.exists()
     config = load_config(config_dir)
     chosen: List[str] = []
-    capabilities = _capabilities()
-    fancy = _tty_active()
+    detected = capabilities()
+    fancy = tty_active()
 
-    print(_c("herdr-announcer setup", "1") if fancy else "herdr-announcer setup")
+    print(colorize("herdr-announcer setup", "1") if fancy else "herdr-announcer setup")
     print("Config: {}".format(config_path))
     print(
         "{} Ctrl-C exits without writing anything.".format(
@@ -165,7 +165,7 @@ def _setup_wizard(
 
     has_custom_summary = bool(config.get("summary_command"))
     summary_options: List[Tuple[str, str]] = []
-    if capabilities["codex"]:
+    if detected["codex"]:
         summary_options.append(
             ("codex", "Codex - one-sentence summary via codex exec")
         )
@@ -173,7 +173,7 @@ def _setup_wizard(
         summary_options.append(
             ("command", "Custom - keep your current summary command")
         )
-    elif capabilities["claude"]:
+    elif detected["claude"]:
         summary_options.append(
             ("command", "Claude Code - one-sentence summary via claude -p")
         )
@@ -246,7 +246,7 @@ def _setup_wizard(
     local_names = [
         name
         for name in ("say", "spd-say", "espeak-ng", "espeak")
-        if capabilities[name]
+        if detected[name]
     ]
     detected = ", ".join(local_names) if local_names else "nothing detected!"
     voice_options = []
@@ -364,7 +364,7 @@ def _setup_wizard(
     if not write_now:
         print("Nothing written.")
         return 0
-    _write_config(config_path, config, chosen)
+    write_config(config_path, config, chosen)
     if write_state is not None:
         write_state["written"] = True
 
@@ -414,6 +414,12 @@ def run_setup(config_dir: Path, state_dir: Path) -> int:
         return 130
 
 
+# Compatibility aliases retained for callers that imported these helpers from
+# announce.py or announcer.wizard before they gained public names.
+_load_raw_config = load_raw_config
+_write_config = write_config
+
+
 __all__ = [
     "_claude_summary_command",
     "_config_lines",
@@ -423,5 +429,7 @@ __all__ = [
     "_setup_wizard",
     "_toml_value",
     "_write_config",
+    "load_raw_config",
     "run_setup",
+    "write_config",
 ]

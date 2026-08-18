@@ -404,7 +404,7 @@ def speak(
         return run_local_speech(config, text, reasons=reasons)
 
 
-def _capabilities() -> Dict[str, Optional[str]]:
+def capabilities() -> Dict[str, Optional[str]]:
     return {
         name: shutil.which(name)
         for name in (
@@ -424,11 +424,16 @@ def _capabilities() -> Dict[str, Optional[str]]:
     }
 
 
+# Compatibility alias for announce._capabilities and older package consumers.
+_capabilities = capabilities
+
+
 __all__ = [
     "DEBOUNCE_MAX_AGE_SECONDS",
     "PlaybackLockTimeout",
     "_capabilities",
     "_prune_debounce_state",
+    "capabilities",
     "check_and_record_debounce",
     "is_debounced",
     "load_debounce_state",
