@@ -40,6 +40,7 @@ from announcer.paths import (
     local_plugin_dirs,
     resolve_dirs_without_env,
 )
+from announcer.redact import redact_command
 from announcer.snooze import (
     SNOOZE_HOUR,
     SNOOZE_STEPS,
@@ -222,7 +223,7 @@ def voice_backend_label(
         if not isinstance(command, list):
             return "custom command  (invalid)"
         try:
-            rendered = shlex.join(str(part) for part in command)
+            rendered = shlex.join(redact_command([str(part) for part in command]))
         except (TypeError, ValueError):
             return "custom command  (invalid)"
         return "custom command  " + _clip(rendered, 48)

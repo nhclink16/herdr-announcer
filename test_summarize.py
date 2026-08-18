@@ -65,6 +65,24 @@ class SummaryReasonTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(reasons, ["command: timeout"])
 
+    @mock.patch.object(summarize.subprocess, "run")
+    def test_command_failure_diagnostic_redacts_inline_secret(self, run):
+        secret = "super-secret-1234"
+        config = self.config()
+        config["summary_command"] = ["summarize", "--api-key", secret]
+        run.side_effect = subprocess.CalledProcessError(
+            2, config["summary_command"], stderr="failed for " + secret
+        )
+        reasons = []
+
+        result = summarize.command_summary(
+            config, "builder", "work", "done", "transcript", reasons
+        )
+
+        self.assertIsNone(result)
+        self.assertIn("****1234", reasons[0])
+        self.assertNotIn(secret, reasons[0])
+
 class StatusReasonTests(unittest.TestCase):
     def test_persisted_last_error_and_unknown_keys_appear_in_status(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -98,6 +116,40 @@ class StatusReasonTests(unittest.TestCase):
         self.assertIn("elevenlabs: HTTP 401", text)
         self.assertIn("espeak-ng: no", text)
         self.assertIn("pw-play: no", text)
+
+    def test_status_masks_secrets_embedded_in_commands(self):
+        secret = "super-secret-1234"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_dir = root / "config"
+            state_dir = root / "state"
+            config_dir.mkdir()
+            state_dir.mkdir()
+            (config_dir / "config.toml").write_text(
+                'summary_command = ["helper", "--api-key", "{}"]\n'
+                'speak_command = ["speaker", "API_TOKEN={}"]\n'.format(
+                    secret, secret
+                ),
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with mock.patch.object(
+                announce,
+                "capabilities",
+                return_value={
+                    name: None
+                    for name in (
+                        "codex", "claude", "say", "spd-say", "espeak-ng",
+                        "espeak", "mpv", "ffplay", "afplay", "paplay",
+                        "pw-play", "aplay",
+                    )
+                },
+            ), contextlib.redirect_stdout(output):
+                announce.show_status(config_dir, state_dir)
+
+        text = output.getvalue()
+        self.assertIn("****1234", text)
+        self.assertNotIn(secret, text)
 
 
 if __name__ == "__main__":

@@ -891,13 +891,17 @@ class DerivedValueTests(DashboardTestCase):
         self.assertEqual(set(dashboard.STATE_HELP), set(dashboard.STATE_ORDER))
 
     def test_voice_backend_label_prefers_a_custom_command(self):
-        config = {"speak_command": ["say", "-v", "Alex"],
+        config = {"speak_command": [
+                      "speaker", "--api-key", "super-secret-1234"
+                  ],
                   "elevenlabs_api_key": "key"}
 
         label = dashboard.voice_backend_label(config, {})
 
         self.assertTrue(label.startswith("custom command  "), label)
-        self.assertIn("say", label)
+        self.assertIn("speaker", label)
+        self.assertIn("****1234", label)
+        self.assertNotIn("super-secret", label)
 
     def test_voice_backend_label_marks_an_invalid_custom_command(self):
         config = {"speak_command": "say -v Alex"}

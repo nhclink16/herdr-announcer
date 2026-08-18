@@ -17,6 +17,7 @@ from announcer.config import *  # noqa: F401,F403
 from announcer.herdr import *  # noqa: F401,F403
 from announcer.log import *  # noqa: F401,F403
 from announcer.paths import *  # noqa: F401,F403
+from announcer.redact import mask_secret, redact_command, redact_command_text
 from announcer.speech import *  # noqa: F401,F403
 from announcer.snooze import *  # noqa: F401,F403
 from announcer.summarize import *  # noqa: F401,F403
@@ -222,7 +223,9 @@ def show_status(config_dir: Path, state_dir: Path) -> int:
     for key in DEFAULTS:
         value = config[key]
         if key == "elevenlabs_api_key" and value:
-            value = str(value)[:4] + "..."
+            value = mask_secret(str(value))
+        elif key in ("summary_command", "speak_command") and isinstance(value, list):
+            value = redact_command([str(argument) for argument in value])
         print("  {} = {}".format(key, json.dumps(value)))
     print("capabilities:")
     for name in (
@@ -249,17 +252,32 @@ def show_status(config_dir: Path, state_dir: Path) -> int:
     if last_error is None:
         print("last error: none")
     else:
-        print("last error: {} {}".format(last_error[0], ";".join(last_error[1])))
+        detail = _redact_configured_text(";".join(last_error[1]), config)
+        print("last error: {} {}".format(last_error[0], detail))
     log_path = state_dir / "announcer.log"
     if log_path.exists():
         print("log (last 8 lines):")
         with log_path.open("r", encoding="utf-8", errors="replace") as handle:
             lines = handle.readlines()[-8:]
         for line in lines:
-            print("  " + line.rstrip("\n"))
+            print("  " + _redact_configured_text(line.rstrip("\n"), config))
     else:
         print("log: not found ({})".format(log_path))
     return 0
+
+
+def _redact_configured_text(text: str, config: Dict[str, Any]) -> str:
+    redacted = text
+    for key in ("summary_command", "speak_command"):
+        command = config.get(key)
+        if isinstance(command, list) and all(
+            isinstance(argument, str) for argument in command
+        ):
+            redacted = redact_command_text(redacted, command)
+    api_key = str(config.get("elevenlabs_api_key") or "")
+    if api_key:
+        redacted = redacted.replace(api_key, mask_secret(api_key))
+    return redacted
 
 
 def _argument_parser() -> argparse.ArgumentParser:
