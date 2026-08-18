@@ -322,6 +322,10 @@ def _restore_file(path: Path, contents: Optional[bytes], mode: Optional[int]) ->
         except FileNotFoundError:
             pass
         return
+    if path.exists() and path.read_bytes() == contents:
+        if mode is not None and (path.stat().st_mode & 0o7777) != mode:
+            path.chmod(mode)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_name = ""
     try:

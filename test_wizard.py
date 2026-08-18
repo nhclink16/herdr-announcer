@@ -338,6 +338,29 @@ class WizardFlowTests(unittest.TestCase):
         self.assertTrue(reacquired.is_set())
         self.assertIn("nothing written", output.getvalue())
 
+    def test_abort_before_write_does_not_replace_unchanged_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_dir = root / "config"
+            config_dir.mkdir()
+            path = config_dir / "config.toml"
+            original = b'# untouched\nsummary = "codex"\n'
+            path.write_bytes(original)
+            before = path.stat()
+
+            with mock.patch.object(
+                wizard, "_setup_wizard", side_effect=KeyboardInterrupt
+            ), contextlib.redirect_stdout(io.StringIO()):
+                result = wizard.run_setup(config_dir, root / "state")
+
+            after = path.stat()
+            contents = path.read_bytes()
+
+        self.assertEqual(result, 130)
+        self.assertEqual(contents, original)
+        self.assertEqual(after.st_ino, before.st_ino)
+        self.assertEqual(after.st_mtime_ns, before.st_mtime_ns)
+
     def test_fresh_install_voice_choices_omit_keep_current(self):
         class StopWizard(Exception):
             pass
