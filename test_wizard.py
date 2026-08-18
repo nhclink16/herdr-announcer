@@ -13,7 +13,85 @@ from announcer import wizard
 class ConfigWriterTests(unittest.TestCase):
     def test_private_config_helpers_alias_public_api(self):
         self.assertIs(wizard._load_raw_config, wizard.load_raw_config)
-        self.assertIs(wizard._write_config, wizard.write_config)
+
+    def test_load_raw_config_reads_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text('voice = "Alex"\n', encoding="utf-8")
+
+            loaded = wizard.load_raw_config(path)
+
+        self.assertEqual(loaded["voice"], "Alex")
+
+    def test_private_writer_keeps_nondefault_values_without_chosen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            path = config_dir / "config.toml"
+            config = dict(DEFAULTS)
+            config["voice"] = "Alex"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                wizard._write_config(path, config, [])
+
+            loaded = load_config(config_dir)
+
+        self.assertEqual(loaded["voice"], "Alex")
+
+    def test_quoted_known_key_is_replaced_without_duplicate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            path = config_dir / "config.toml"
+            path.write_text('"toast" = false\n', encoding="utf-8")
+            config = load_config(config_dir)
+            config["toast"] = True
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                wizard.write_config(path, config, ["toast"])
+
+            contents = path.read_text(encoding="utf-8")
+            loaded = load_config(config_dir)
+
+        self.assertEqual(contents.count("toast"), 1)
+        self.assertTrue(loaded["toast"])
+
+    def test_unrelated_update_preserves_multiline_known_values(self):
+        original = (
+            'announce = [\n    "done",\n    "idle",\n]\n'
+            'custom_prompt = """First line\nSecond line"""\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            path = config_dir / "config.toml"
+            path.write_text(original, encoding="utf-8")
+            config = load_config(config_dir)
+            config["toast"] = True
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                wizard.write_config(path, config, ["toast"])
+
+            contents = path.read_text(encoding="utf-8")
+
+        self.assertIn(original, contents)
+        self.assertIn("toast = true", contents)
+
+    def test_targeted_update_replaces_multiline_known_value(self):
+        original = 'announce = [\n    "done",\n    "idle",\n]\nvoice = "Alex"\n'
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            path = config_dir / "config.toml"
+            path.write_text(original, encoding="utf-8")
+            config = load_config(config_dir)
+            config["announce"] = ["blocked"]
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                wizard.write_config(path, config, ["announce"])
+
+            contents = path.read_text(encoding="utf-8")
+            loaded = load_config(config_dir)
+
+        self.assertEqual(loaded["announce"], ["blocked"])
+        self.assertIn('voice = "Alex"', contents)
+        self.assertNotIn('"idle"', contents)
 
     def test_unknown_float_and_table_survive_known_update(self):
         original_unknown = (

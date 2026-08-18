@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, MutableMapping, Optional, Sequence, Set, Tuple
 
-from .config import DEFAULTS, _load_tiny_toml, _strip_comment, load_config, tomllib
+from .config import DEFAULTS, _load_tiny_toml, load_config, tomllib
 from .speech import capabilities, speak
 from .summarize import ANNOUNCEMENT_PROMPT
 from .tui import (
@@ -39,6 +39,13 @@ def _toml_value(value: Any) -> str:
 def load_raw_config(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
+    try:
+        if tomllib is not None:
+            with path.open("rb") as handle:
+                return tomllib.load(handle)
+        return _load_tiny_toml(path)
+    except (OSError, ValueError):
+        return {}
 
 
 @contextmanager
@@ -56,60 +63,164 @@ def config_lock(path: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _top_level_known_keys(path: Path) -> Set[str]:
-    keys: Set[str] = set()
-    if not path.exists():
-        return keys
-    in_table = False
-    with path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = _strip_comment(raw_line)
-            if not line:
-                continue
-            if line.startswith("["):
-                in_table = True
-                continue
-            if in_table or "=" not in line:
-                continue
-            key = line.split("=", 1)[0].strip()
-            if key in DEFAULTS:
-                keys.add(key)
-    return keys
+def _assignment_separator(line: str) -> int:
+    quote = ""
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote == '"':
+            escaped = True
+            continue
+        if char in ('"', "'"):
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ""
+            continue
+        if char == "#" and not quote:
+            return -1
+        if char == "=" and not quote:
+            return index
+    return -1
 
 
-def _preserved_config_lines(path: Path) -> List[str]:
-    """Keep every line except known, top-level settings rewritten below."""
-    if not path.exists():
-        return []
-    preserved: List[str] = []
-    in_table = False
-    with path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = _strip_comment(raw_line)
-            if line.startswith("["):
-                in_table = True
-            if not in_table and "=" in line:
-                key, raw_value = (part.strip() for part in line.split("=", 1))
-                if key in DEFAULTS:
-                    if (
-                        (raw_value.startswith("[") and not raw_value.endswith("]"))
-                        or (raw_value.startswith("{") and not raw_value.endswith("}"))
-                        or raw_value.startswith("\"\"\"")
-                        or raw_value.startswith("'''")
-                    ):
-                        raise ValueError(
-                            "cannot safely rewrite multiline config value"
-                        )
-                    continue
-            preserved.append(raw_line)
-    return preserved
+def _known_key(raw_key: str) -> Optional[str]:
+    key = raw_key.strip()
+    if key in DEFAULTS:
+        return key
+    if len(key) < 2 or key[0] != key[-1] or key[0] not in ('"', "'"):
+        return None
     try:
-        if tomllib is not None:
-            with path.open("rb") as handle:
-                return tomllib.load(handle)
-        return _load_tiny_toml(path)
-    except (OSError, ValueError):
-        return {}
+        decoded = json.loads(key) if key[0] == '"' else key[1:-1]
+    except (TypeError, ValueError):
+        return None
+    return decoded if decoded in DEFAULTS else None
+
+
+def _toml_value_end(text: str, start: int) -> int:
+    """Return the end of one TOML value, including its final newline."""
+    square_depth = 0
+    curly_depth = 0
+    quote = ""
+    triple = False
+    escaped = False
+    comment = False
+    index = start
+    while index < len(text):
+        char = text[index]
+        if comment:
+            if char == "\n":
+                comment = False
+                if square_depth == 0 and curly_depth == 0:
+                    return index + 1
+            index += 1
+            continue
+        if quote:
+            delimiter = quote * (3 if triple else 1)
+            if escaped:
+                escaped = False
+                index += 1
+                continue
+            if quote == '"' and char == "\\":
+                escaped = True
+                index += 1
+                continue
+            if text.startswith(delimiter, index):
+                quote = ""
+                triple = False
+                index += len(delimiter)
+                continue
+            index += 1
+            continue
+        if char == "#":
+            comment = True
+            index += 1
+            continue
+        if text.startswith('\"\"\"', index) or text.startswith("'''", index):
+            quote = char
+            triple = True
+            index += 3
+            continue
+        if char in ('"', "'"):
+            quote = char
+            index += 1
+            continue
+        if char == "[":
+            square_depth += 1
+        elif char == "]" and square_depth:
+            square_depth -= 1
+        elif char == "{":
+            curly_depth += 1
+        elif char == "}" and curly_depth:
+            curly_depth -= 1
+        elif char == "\n" and square_depth == 0 and curly_depth == 0:
+            return index + 1
+        index += 1
+    return len(text)
+
+
+def _known_assignment_spans(text: str) -> Dict[str, List[Tuple[int, int]]]:
+    spans: Dict[str, List[Tuple[int, int]]] = {}
+    offset = 0
+    while offset < len(text):
+        newline = text.find("\n", offset)
+        line_end = len(text) if newline < 0 else newline + 1
+        line = text[offset:line_end]
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            offset = line_end
+            continue
+        if stripped.startswith("["):
+            break
+        separator = _assignment_separator(line)
+        if separator < 0:
+            offset = line_end
+            continue
+        end = _toml_value_end(text, offset + separator + 1)
+        key = _known_key(line[:separator])
+        if key is not None:
+            spans.setdefault(key, []).append((offset, end))
+        offset = end
+    return spans
+
+
+def _top_level_known_keys(path: Path) -> Set[str]:
+    if not path.exists():
+        return set()
+    text = path.read_text(encoding="utf-8")
+    return set(_known_assignment_spans(text))
+
+
+def _rewrite_config_text(
+    original: str,
+    config: Dict[str, Any],
+    keys_to_write: Sequence[str],
+    keys_to_replace: Sequence[str],
+) -> str:
+    spans = _known_assignment_spans(original)
+    removed = [
+        span
+        for key in keys_to_replace
+        for span in spans.get(key, [])
+    ]
+    removed.sort()
+    pieces: List[str] = []
+    cursor = 0
+    for start, end in removed:
+        pieces.append(original[cursor:start])
+        cursor = end
+    pieces.append(original[cursor:])
+    preserved = "".join(pieces)
+    write_keys = set(keys_to_write)
+    lines = [
+        "{} = {}".format(key, _toml_value(config[key]))
+        for key in DEFAULTS
+        if key in write_keys and config.get(key) is not None
+    ]
+    prefix = "".join(line + "\n" for line in lines)
+    return prefix + preserved
 
 
 def _config_lines(
@@ -125,10 +236,14 @@ def _config_lines(
 
 
 def _write_config_unlocked(
-    path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
+    path: Path,
+    config: Dict[str, Any],
+    keys_to_write: Sequence[str],
+    keys_to_replace: Optional[Sequence[str]] = None,
 ) -> None:
-    lines = _config_lines(config, explicitly_chosen)
-    preserved = _preserved_config_lines(path)
+    replace = keys_to_write if keys_to_replace is None else keys_to_replace
+    original = path.read_text(encoding="utf-8") if path.exists() else ""
+    rewritten = _rewrite_config_text(original, config, keys_to_write, replace)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         shutil.copy2(str(path), str(path.with_name("config.toml.bak")))
@@ -143,11 +258,7 @@ def _write_config_unlocked(
             delete=False,
         ) as handle:
             temporary_name = handle.name
-            for line in lines:
-                handle.write(line + "\n")
-            if lines and preserved and preserved[0].strip():
-                handle.write("\n")
-            handle.writelines(preserved)
+            handle.write(rewritten)
         os.replace(temporary_name, str(path))
         temporary_name = ""
     finally:
@@ -164,13 +275,12 @@ def write_config(
 ) -> None:
     """Atomically rebase chosen keys while preserving unknown TOML text."""
     with config_lock(path):
-        existing_keys = _top_level_known_keys(path)
-        merged = load_config(path.parent) if path.exists() else dict(DEFAULTS)
-        for key in explicitly_chosen:
-            if key in DEFAULTS and key in config:
-                merged[key] = config[key]
-        chosen = sorted(existing_keys | set(explicitly_chosen))
-        _write_config_unlocked(path, merged, chosen)
+        chosen = [
+            key
+            for key in explicitly_chosen
+            if key in DEFAULTS and key in config
+        ]
+        _write_config_unlocked(path, config, chosen)
 
 
 def _claude_summary_command() -> List[str]:
@@ -489,7 +599,25 @@ def run_setup(config_dir: Path, state_dir: Path) -> int:
 # Compatibility aliases retained for callers that imported these helpers from
 # announce.py or announcer.wizard before they gained public names.
 _load_raw_config = load_raw_config
-_write_config = write_config
+
+
+def _write_config(
+    path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
+) -> None:
+    """Preserve the pre-0.9.0 private writer's full-config semantics."""
+    with config_lock(path):
+        chosen = {
+            key
+            for key in explicitly_chosen
+            if key in DEFAULTS and key in config
+        }
+        chosen.update(
+            key
+            for key in DEFAULTS
+            if key in config and config.get(key) != DEFAULTS[key]
+        )
+        replace = chosen | _top_level_known_keys(path)
+        _write_config_unlocked(path, config, sorted(chosen), sorted(replace))
 
 
 __all__ = [
