@@ -1,6 +1,6 @@
 id = "nhclink16.announcer"
 name = "Announcer"
-version = "0.8.0"
+version = "0.9.0"
 min_herdr_version = "0.7.0"
 description = "Speaks a short summary when an agent finishes or needs input - local TTS, ElevenLabs, or any custom command"
 platforms = ["macos", "linux"]
@@ -21,8 +21,58 @@ title = "Announcer status"
 contexts = ["workspace"]
 command = ["python3", "announce.py", "status"]
 
+[[actions]]
+id = "open-dashboard"
+title = "Open announcer dashboard"
+contexts = ["workspace"]
+command = ["python3", "dashboard.py", "open"]
+
+[[actions]]
+id = "snooze-5m"
+title = "Snooze announcer for 5 minutes"
+contexts = ["workspace"]
+command = ["python3", "dashboard.py", "snooze", "5m"]
+
+[[actions]]
+id = "snooze-30m"
+title = "Snooze announcer for 30 minutes"
+contexts = ["workspace"]
+command = ["python3", "dashboard.py", "snooze", "30m"]
+
+[[actions]]
+id = "snooze-2h"
+title = "Snooze announcer for 2 hours"
+contexts = ["workspace"]
+command = ["python3", "dashboard.py", "snooze", "2h"]
+
+[[actions]]
+id = "snooze-tomorrow"
+title = "Snooze announcer until tomorrow morning"
+contexts = ["workspace"]
+command = ["python3", "dashboard.py", "snooze", "tomorrow"]
+
+[[actions]]
+id = "snooze-off"
+title = "Resume announcer now"
+contexts = ["workspace"]
+command = ["python3", "dashboard.py", "snooze", "off"]
+
+[[actions]]
+id = "toggle-toast"
+title = "Toggle announcer toast notifications"
+contexts = ["workspace"]
+command = ["python3", "dashboard.py", "toggle-toast"]
+
 [[panes]]
 id = "setup"
 title = "Announcer setup"
 placement = "split"
 command = ["python3", "announce.py", "setup"]
+
+[[panes]]
+id = "dashboard"
+title = "Announcer dashboard"
+placement = "popup"
+width = 94
+height = 30
+command = ["python3", "dashboard.py"]
