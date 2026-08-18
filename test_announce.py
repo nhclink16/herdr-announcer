@@ -66,7 +66,10 @@ class SummaryFallbackTests(unittest.TestCase):
         )
 
         self.assertEqual(result, "summary")
-        self.assertEqual(run.call_args.kwargs["timeout"], 30.0)
+        # Every summary command gets the full two-phase budget:
+        # first_activity (5) + completion (30) + 2 of grace. Previously only
+        # acp-summary.py (matched by basename) got this; the special case is gone.
+        self.assertEqual(run.call_args.kwargs["timeout"], 37.0)
         self.assertEqual(
             run.call_args.kwargs["env"][
                 "HERDR_SUMMARY_FIRST_ACTIVITY_TIMEOUT_SECONDS"

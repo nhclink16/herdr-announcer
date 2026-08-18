@@ -14,6 +14,20 @@ import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+try:
+    from announcer.deadline import TwoPhaseDeadline, read_lines, stop_subprocess
+except ImportError as error:
+    print(
+        "acp-summary: expected announcer/ beside examples/ ({})".format(error),
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 
 
 COMMAND = ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
@@ -41,11 +55,7 @@ def send_message(process, message):
 
 
 def read_stdout(stream, messages):
-    try:
-        for line in iter(stream.readline, ""):
-            messages.put(line)
-    finally:
-        messages.put(None)
+    read_lines(stream, messages)
 
 
 def request_error(message):
@@ -64,25 +74,15 @@ def wait_for_response(
     first_activity_deadline=None,
     completion_timeout=None,
 ):
+    timer = TwoPhaseDeadline(
+        first_activity_deadline=first_activity_deadline,
+        completion_timeout=completion_timeout,
+        deadline=deadline,
+        first_timeout_message="ACP model produced no activity",
+        completion_timeout_message="ACP request timed out",
+    )
     while True:
-        now = time.monotonic()
-        active_deadline = first_activity_deadline or deadline
-        if active_deadline is None:
-            raise ValueError("a response deadline is required")
-        remaining = active_deadline - now
-        if remaining <= 0:
-            if first_activity_deadline is not None and now >= first_activity_deadline:
-                raise TimeoutError("ACP model produced no activity")
-            raise TimeoutError("ACP request timed out")
-        try:
-            line = messages.get(timeout=remaining)
-        except queue.Empty:
-            if (
-                first_activity_deadline is not None
-                and time.monotonic() >= first_activity_deadline
-            ):
-                raise TimeoutError("ACP model produced no activity")
-            raise TimeoutError("ACP request timed out")
+        line = timer.get(messages)
 
         if line is None:
             raise RuntimeError("ACP adapter closed stdout")
@@ -118,10 +118,7 @@ def wait_for_response(
                 update.get("sessionUpdate") if isinstance(update, dict) else None
             )
             if update_type in MODEL_ACTIVITY_UPDATES:
-                if first_activity_deadline is not None:
-                    first_activity_deadline = None
-                    if completion_timeout is not None:
-                        deadline = time.monotonic() + completion_timeout
+                timer.record_activity()
             if isinstance(update, dict) and update_type == "agent_message_chunk":
                 content = update.get("content")
                 text = content.get("text") if isinstance(content, dict) else None
@@ -130,36 +127,7 @@ def wait_for_response(
 
 
 def stop_process(process, clean_exit, deadline):
-    if clean_exit and process.stdin is not None:
-        try:
-            process.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
-    if process.poll() is not None:
-        return
-
-    if clean_exit:
-        grace = min(1.0, max(0.0, deadline - time.monotonic()))
-        if grace:
-            try:
-                process.wait(timeout=grace)
-                return
-            except subprocess.TimeoutExpired:
-                pass
-
-    if time.monotonic() >= deadline:
-        process.kill()
-        return
-    process.terminate()
-    termination_grace = max(0.0, min(0.5, deadline - time.monotonic()))
-    if not termination_grace:
-        process.kill()
-        return
-    try:
-        process.wait(timeout=termination_grace)
-        return
-    except subprocess.TimeoutExpired:
-        process.kill()
+    stop_subprocess(process, clean_exit=clean_exit, deadline=deadline)
 
 
 def initialize(process, messages, deadline):
