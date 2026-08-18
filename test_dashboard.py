@@ -2122,6 +2122,10 @@ class SuiteInvariantTests(unittest.TestCase):
     def test_root_dashboard_is_the_package_implementation(self):
         self.assertEqual(dashboard.__name__, "announcer.dashboard")
 
+    def test_script_dir_remains_the_plugin_root(self):
+        self.assertTrue((dashboard.SCRIPT_DIR / "announce.py").is_file())
+        self.assertTrue((dashboard.SCRIPT_DIR / "dashboard.py").is_file())
+
     def test_tui_private_names_alias_the_public_api(self):
         pairs = (
             ("_frame", "frame"),
