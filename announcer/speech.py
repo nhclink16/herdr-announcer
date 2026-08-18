@@ -1,6 +1,7 @@
 """Speech backends, playback serialization, and debounce state."""
 
 import json
+import math
 import os
 import platform
 import shutil
@@ -38,7 +39,12 @@ def is_debounced(
     if not isinstance(previous, dict) or previous.get("status") != status:
         return False
     timestamp = previous.get("ts")
-    if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+    if (
+        isinstance(timestamp, bool)
+        or not isinstance(timestamp, (int, float))
+        or not math.isfinite(float(timestamp))
+        or float(timestamp) > now
+    ):
         return False
     return now - float(timestamp) <= seconds
 
@@ -49,6 +55,8 @@ def _prune_debounce_state(state: Dict[str, Any], now: float) -> None:
         if (
             isinstance(timestamp, bool)
             or not isinstance(timestamp, (int, float))
+            or not math.isfinite(float(timestamp))
+            or float(timestamp) > now
             or now - float(timestamp) > DEBOUNCE_MAX_AGE_SECONDS
         ):
             del state[key]
@@ -82,9 +90,9 @@ def save_debounce_state(
                 pass
 
 
-def check_and_record_debounce(
+def reserve_debounce(
     state_dir: Path, pane_id: str, status: str, seconds: int
-) -> bool:
+) -> Tuple[bool, Optional[float]]:
     """Atomically check and record the announcement, so two hooks racing on
     the same event can't both pass the debounce window."""
     import fcntl
@@ -95,14 +103,26 @@ def check_and_record_debounce(
             now = time.time()
             state = load_debounce_state(state_dir / "last.json")
             if is_debounced(state, pane_id, status, now, seconds):
-                return True
+                return True, None
             save_debounce_state(state_dir, state, pane_id, status, now)
-            return False
+            return False, now
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def rollback_debounce(state_dir: Path, pane_id: str, status: str) -> None:
+def check_and_record_debounce(
+    state_dir: Path, pane_id: str, status: str, seconds: int
+) -> bool:
+    """Compatibility wrapper preserving the original boolean API."""
+    return reserve_debounce(state_dir, pane_id, status, seconds)[0]
+
+
+def rollback_debounce(
+    state_dir: Path,
+    pane_id: str,
+    status: str,
+    reservation: Optional[float] = None,
+) -> None:
     import fcntl
 
     with (state_dir / "debounce.lock").open("a+") as handle:
@@ -110,7 +130,14 @@ def rollback_debounce(state_dir: Path, pane_id: str, status: str) -> None:
         try:
             state = load_debounce_state(state_dir / "last.json")
             value = state.get(pane_id)
-            if isinstance(value, dict) and value.get("status") == status:
+            owns_reservation = reservation is None or (
+                isinstance(value, dict) and value.get("ts") == reservation
+            )
+            if (
+                isinstance(value, dict)
+                and value.get("status") == status
+                and owns_reservation
+            ):
                 del state[pane_id]
                 temporary_name = ""
                 try:
@@ -439,6 +466,7 @@ __all__ = [
     "load_debounce_state",
     "play_audio_file",
     "playback_lock",
+    "reserve_debounce",
     "rollback_debounce",
     "run_custom_speech",
     "run_local_speech",

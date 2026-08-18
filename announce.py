@@ -130,7 +130,10 @@ def process_invocation(
     debounce_value = config.get("debounce_seconds")
     if isinstance(debounce_value, bool) or not isinstance(debounce_value, int):
         raise ValueError("debounce_seconds must be an integer")
-    if check_and_record_debounce(state_dir, pane_id, status, debounce_value):
+    debounced, reservation = reserve_debounce(
+        state_dir, pane_id, status, debounce_value
+    )
+    if debounced:
         return "debounced"
 
     try:
@@ -145,10 +148,10 @@ def process_invocation(
         try:
             backend = speak(config, announcement, state_dir, reasons)
         except PlaybackLockTimeout:
-            rollback_debounce(state_dir, pane_id, status)
+            rollback_debounce(state_dir, pane_id, status, reservation)
             return "gave-up-waiting"
     except Exception:
-        rollback_debounce(state_dir, pane_id, status)
+        rollback_debounce(state_dir, pane_id, status, reservation)
         raise
     return "announced+summary-{}+speak-{}".format(summary_backend, backend)
 
