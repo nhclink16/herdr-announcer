@@ -17,6 +17,25 @@ SPEC.loader.exec_module(acp_summary)
 
 
 class AcpFirstActivityTests(unittest.TestCase):
+    @mock.patch.object(acp_summary.subprocess, "Popen")
+    def test_start_adapter_uses_pinned_package_version(self, popen):
+        acp_summary.start_adapter()
+
+        self.assertEqual(
+            popen.call_args.args[0],
+            [
+                "npx",
+                "-y",
+                "@agentclientprotocol/claude-agent-acp@0.70.0",
+            ],
+        )
+
+    @mock.patch.object(acp_summary.subprocess, "Popen")
+    def test_start_adapter_inherits_stderr_for_diagnostics(self, popen):
+        acp_summary.start_adapter()
+
+        self.assertIsNone(popen.call_args.kwargs["stderr"])
+
     def test_non_model_events_do_not_satisfy_first_activity(self):
         messages = queue.Queue()
         messages.put(

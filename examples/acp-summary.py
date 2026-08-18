@@ -30,7 +30,7 @@ except ImportError as error:
     raise SystemExit(1)
 
 
-COMMAND = ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
+COMMAND = ["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.70.0"]
 MODEL_ACTIVITY_UPDATES = {
     "agent_message_chunk",
     "agent_thought_chunk",
@@ -222,7 +222,9 @@ def start_adapter():
         COMMAND,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        # stdout is the ACP transport. Keep adapter diagnostics on the
+        # wrapper's separate stderr stream so callers can report failures.
+        stderr=None,
         text=True,
         encoding="utf-8",
         errors="replace",
