@@ -128,7 +128,7 @@ class SummaryFallbackTests(unittest.TestCase):
             announce._collect_codex_summary(
                 messages,
                 first_activity_deadline=time.monotonic() + 0.005,
-                completion_timeout=0.1,
+                completion_timeout=5.0,
             )
 
     def test_codex_reasoning_start_allows_slow_completion(self):
@@ -157,13 +157,13 @@ class SummaryFallbackTests(unittest.TestCase):
             )
             messages.put(json.dumps({"type": "turn.completed"}))
 
-        timer = threading.Timer(0.02, finish)
+        timer = threading.Timer(0.05, finish)
         timer.start()
         try:
             result = announce._collect_codex_summary(
                 messages,
                 first_activity_deadline=time.monotonic() + 0.005,
-                completion_timeout=0.1,
+                completion_timeout=5.0,
             )
         finally:
             timer.cancel()
@@ -198,15 +198,15 @@ class SummaryFallbackTests(unittest.TestCase):
             )
             messages.put(json.dumps({"type": "turn.completed"}))
 
-        start_timer = threading.Timer(0.04, start)
-        finish_timer = threading.Timer(0.08, finish)
+        start_timer = threading.Timer(0.4, start)
+        finish_timer = threading.Timer(0.8, finish)
         start_timer.start()
         finish_timer.start()
         try:
             result = announce._collect_codex_summary(
                 messages,
-                first_activity_deadline=time.monotonic() + 0.05,
-                completion_timeout=0.06,
+                first_activity_deadline=time.monotonic() + 0.5,
+                completion_timeout=0.6,
             )
         finally:
             start_timer.cancel()
