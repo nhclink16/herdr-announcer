@@ -83,6 +83,24 @@ class SummaryReasonTests(unittest.TestCase):
         self.assertIn("****1234", reasons[0])
         self.assertNotIn(secret, reasons[0])
 
+    @mock.patch.object(summarize.subprocess, "run")
+    def test_command_no_output_diagnostic_redacts_stderr_secret(self, run):
+        secret = "super-secret-1234"
+        config = self.config()
+        config["summary_command"] = ["summarize", secret]
+        run.return_value = subprocess.CompletedProcess(
+            config["summary_command"], 0, stdout="", stderr="failed for " + secret
+        )
+        reasons = []
+
+        result = summarize.command_summary(
+            config, "builder", "work", "done", "transcript", reasons
+        )
+
+        self.assertIsNone(result)
+        self.assertIn("****1234", reasons[0])
+        self.assertNotIn(secret, reasons[0])
+
 class StatusReasonTests(unittest.TestCase):
     def test_persisted_last_error_and_unknown_keys_appear_in_status(self):
         with tempfile.TemporaryDirectory() as directory:
