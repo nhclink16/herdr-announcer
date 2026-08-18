@@ -2119,6 +2119,9 @@ class ConfigRoundTripTests(DashboardTestCase):
 
 
 class SuiteInvariantTests(unittest.TestCase):
+    def test_root_dashboard_is_the_package_implementation(self):
+        self.assertEqual(dashboard.__name__, "announcer.dashboard")
+
     def test_tui_private_names_alias_the_public_api(self):
         pairs = (
             ("_frame", "frame"),

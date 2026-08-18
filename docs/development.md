@@ -4,7 +4,9 @@
 
 ```
 announce.py       entrypoint + orchestration; a thin facade over announcer/
+dashboard.py      compatibility entrypoint for plugin actions and imports
 announcer/
+  dashboard.py    live status TUI and dashboard command routing
   config.py       defaults, TOML loading (tomllib, tiny-TOML fallback on 3.9)
   config_io.py    compatibility-safe config editing for noninteractive UIs
   herdr.py        Herdr CLI client, event parsing
