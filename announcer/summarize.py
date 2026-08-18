@@ -10,6 +10,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from .deadline import TwoPhaseDeadline, drain_lines, read_lines, stop_subprocess
+from .redact import redact_command_text
 
 
 ANNOUNCEMENT_PROMPT = (
@@ -315,7 +316,7 @@ def command_summary(
         return None
     except (OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
         if reasons is not None:
-            detail = str(error).strip()
+            detail = redact_command_text(str(error), command).strip()
             reasons.append(
                 "command: {}".format(
                     detail[:120] if detail else error.__class__.__name__
@@ -326,7 +327,8 @@ def command_summary(
     if not lines:
         if reasons is not None:
             detail = completed.stderr.strip().splitlines()
-            suffix = " " + detail[-1][:120] if detail else ""
+            safe_detail = redact_command_text(detail[-1], command) if detail else ""
+            suffix = " " + safe_detail[:120] if safe_detail else ""
             reasons.append("command: no-output{}".format(suffix))
         return None
     sanitized = _sanitize_summary(lines[-1])

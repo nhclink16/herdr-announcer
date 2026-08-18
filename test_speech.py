@@ -87,6 +87,20 @@ class LocalBackendTests(unittest.TestCase):
         self.assertIn("spd-say: timeout", reasons)
 
 
+class CustomBackendTests(unittest.TestCase):
+    @mock.patch.object(speech.subprocess, "run")
+    def test_failed_command_keeps_exception_type_but_redacts_argv(self, run):
+        secret = "super-secret-1234"
+        command = ["speaker", "--api-key", secret]
+        run.side_effect = subprocess.CalledProcessError(2, command)
+
+        with self.assertRaises(subprocess.CalledProcessError) as caught:
+            speech.run_custom_speech(command, "hello")
+
+        self.assertEqual(caught.exception.cmd[-1], "****1234")
+        self.assertNotIn(secret, str(caught.exception))
+
+
 class ElevenLabsTests(unittest.TestCase):
     def config(self):
         config = dict(DEFAULTS)

@@ -15,6 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
+from .redact import redact_command, redact_command_text
+
 
 DEBOUNCE_MAX_AGE_SECONDS = 24 * 60 * 60
 
@@ -205,15 +207,26 @@ def run_custom_speech(command_value: Any, text: str) -> str:
         raise ValueError("speak_command must not be empty")
     used_placeholder = any("{text}" in argument for argument in command_value)
     command = [argument.replace("{text}", text) for argument in command_value]
-    subprocess.run(
-        command,
-        check=True,
-        input=None if used_placeholder else text,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=60,
-    )
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            input=None if used_placeholder else text,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.SubprocessError as error:
+        # Keep the original exception class/instance for compatibility while
+        # ensuring its printable command cannot expose configured credentials.
+        if hasattr(error, "cmd"):
+            error.cmd = redact_command(command)
+        if isinstance(getattr(error, "stderr", None), str):
+            error.stderr = redact_command_text(error.stderr, command)
+        if isinstance(getattr(error, "output", None), str):
+            error.output = redact_command_text(error.output, command)
+        raise
     return "command"
 
 
