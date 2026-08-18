@@ -277,7 +277,7 @@ def ask_text(
             return default, False
         return value, explicit
     shown = display_default if display_default is not None else default
-    raw = _ask_tty_line(title, shown, secret=False)
+    raw, height = _ask_tty_line(title, shown, secret=False)
     value = raw.strip()
     if not value or (display_default is not None and value == shown):
         result, explicit = default, False
@@ -289,7 +289,7 @@ def ask_text(
         summary = "(updated)"
     else:
         summary = result
-    collapse(2, title, str(summary) if summary else "(blank)")
+    collapse(height, title, str(summary) if summary else "(blank)")
     return result, explicit
 
 
@@ -298,8 +298,9 @@ def ask_secret(
 ) -> Tuple[str, bool]:
     shown = display_default if display_default is not None else ""
     if tty_active():
-        raw = _ask_tty_line(title, shown, secret=True)
+        raw, height = _ask_tty_line(title, shown, secret=True)
         value = raw.strip()
+        collapse(height, title, "(updated)" if value else shown or "(blank)")
         return (value, True) if value else (default, False)
     prompt = "{} [{}]: ".format(title, shown) if shown else "{}: ".format(title)
     try:
@@ -312,7 +313,7 @@ def ask_secret(
     return (value, True) if value else (default, False)
 
 
-def _ask_tty_line(title: str, shown_default: str, secret: bool) -> str:
+def _ask_tty_line(title: str, shown_default: str, secret: bool) -> Tuple[str, int]:
     """Read an editable line in raw mode so abort keys remain observable."""
     entered: List[str] = []
     height = 0
@@ -340,11 +341,7 @@ def _ask_tty_line(title: str, shown_default: str, secret: bool) -> str:
                 if key in ("\x03", "esc"):
                     raise KeyboardInterrupt
                 if key in ("\r", "\n"):
-                    answer = "(updated)" if entered and secret else (
-                        "".join(entered) or shown_default or "(blank)"
-                    )
-                    collapse(height, title, answer)
-                    return "".join(entered)
+                    return "".join(entered), height
                 if key in ("\x7f", "\x08"):
                     if entered:
                         entered.pop()

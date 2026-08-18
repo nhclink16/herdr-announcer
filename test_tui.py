@@ -153,6 +153,7 @@ class PromptAbortTests(unittest.TestCase):
             "tui.ask_text('Name', 'default')", "qa\x7fé\r".encode("utf-8")
         )
         self.assertIn("PROMPT_RESULT=('qé', True)".encode("utf-8"), output)
+        self.assertNotIn(b"\x1b[2A", output)
 
     def test_bare_escape_aborts_every_prompt(self):
         prompts = (
