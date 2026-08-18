@@ -1,11 +1,14 @@
+import contextlib
 import io
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import announce
+from announcer import speech
 
 
 class CliRoutingTests(unittest.TestCase):
@@ -106,7 +109,7 @@ class CliRoutingTests(unittest.TestCase):
                     clear=False,
                 ), mock.patch.object(
                     announce,
-                    "_resolve_dirs_without_env",
+                    "resolve_dirs",
                     return_value=(config_dir, state_dir),
                 ), mock.patch.object(
                     announce, "process_invocation", return_value="announced+mock"
@@ -122,6 +125,56 @@ class CliRoutingTests(unittest.TestCase):
 
 
 class OrchestrationTests(unittest.TestCase):
+    def test_failed_custom_speech_never_persists_or_displays_argv_secret(self):
+        secret = "sk-sentinel-secret-4321"
+        command = [secret]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_dir = root / "config"
+            state_dir = root / "state"
+            config_dir.mkdir()
+            (config_dir / "config.toml").write_text(
+                'speak_command = ["{}"]\n'.format(secret),
+                encoding="utf-8",
+            )
+            stderr = io.StringIO()
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "HERDR_PLUGIN_CONFIG_DIR": str(config_dir),
+                    "HERDR_PLUGIN_STATE_DIR": str(state_dir),
+                },
+                clear=False,
+            ), mock.patch.object(
+                speech.subprocess,
+                "run",
+                side_effect=subprocess.CalledProcessError(2, command),
+            ), mock.patch.object(announce.sys, "stderr", stderr):
+                result = announce.main(["--test"])
+
+            status = io.StringIO()
+            with mock.patch.object(
+                announce,
+                "capabilities",
+                return_value={
+                    name: None
+                    for name in (
+                        "codex", "claude", "say", "spd-say", "espeak-ng",
+                        "espeak", "mpv", "ffplay", "afplay", "paplay",
+                        "pw-play", "aplay",
+                    )
+                },
+            ), contextlib.redirect_stdout(status):
+                announce.show_status(config_dir, state_dir)
+
+            persisted = (state_dir / "last-error.json").read_text(encoding="utf-8")
+            log = (state_dir / "announcer.log").read_text(encoding="utf-8")
+
+        self.assertEqual(result, 1)
+        combined = "\n".join((stderr.getvalue(), persisted, log, status.getvalue()))
+        self.assertNotIn(secret, combined)
+        self.assertIn("****4321", combined)
+
     def test_template_mode_never_invokes_codex_fallback(self):
         config = dict(announce.DEFAULTS)
         config["summary"] = "template"

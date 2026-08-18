@@ -1,6 +1,7 @@
 """Speech backends, playback serialization, and debounce state."""
 
 import json
+import math
 import os
 import platform
 import shutil
@@ -13,6 +14,8 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+
+from .redact import redact_command, redact_command_text
 
 
 DEBOUNCE_MAX_AGE_SECONDS = 24 * 60 * 60
@@ -38,7 +41,12 @@ def is_debounced(
     if not isinstance(previous, dict) or previous.get("status") != status:
         return False
     timestamp = previous.get("ts")
-    if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+    if (
+        isinstance(timestamp, bool)
+        or not isinstance(timestamp, (int, float))
+        or not math.isfinite(float(timestamp))
+        or float(timestamp) > now
+    ):
         return False
     return now - float(timestamp) <= seconds
 
@@ -49,6 +57,8 @@ def _prune_debounce_state(state: Dict[str, Any], now: float) -> None:
         if (
             isinstance(timestamp, bool)
             or not isinstance(timestamp, (int, float))
+            or not math.isfinite(float(timestamp))
+            or float(timestamp) > now
             or now - float(timestamp) > DEBOUNCE_MAX_AGE_SECONDS
         ):
             del state[key]
@@ -82,9 +92,9 @@ def save_debounce_state(
                 pass
 
 
-def check_and_record_debounce(
+def reserve_debounce(
     state_dir: Path, pane_id: str, status: str, seconds: int
-) -> bool:
+) -> Tuple[bool, Optional[float]]:
     """Atomically check and record the announcement, so two hooks racing on
     the same event can't both pass the debounce window."""
     import fcntl
@@ -95,14 +105,26 @@ def check_and_record_debounce(
             now = time.time()
             state = load_debounce_state(state_dir / "last.json")
             if is_debounced(state, pane_id, status, now, seconds):
-                return True
+                return True, None
             save_debounce_state(state_dir, state, pane_id, status, now)
-            return False
+            return False, now
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def rollback_debounce(state_dir: Path, pane_id: str, status: str) -> None:
+def check_and_record_debounce(
+    state_dir: Path, pane_id: str, status: str, seconds: int
+) -> bool:
+    """Compatibility wrapper preserving the original boolean API."""
+    return reserve_debounce(state_dir, pane_id, status, seconds)[0]
+
+
+def rollback_debounce(
+    state_dir: Path,
+    pane_id: str,
+    status: str,
+    reservation: Optional[float] = None,
+) -> None:
     import fcntl
 
     with (state_dir / "debounce.lock").open("a+") as handle:
@@ -110,7 +132,14 @@ def rollback_debounce(state_dir: Path, pane_id: str, status: str) -> None:
         try:
             state = load_debounce_state(state_dir / "last.json")
             value = state.get(pane_id)
-            if isinstance(value, dict) and value.get("status") == status:
+            owns_reservation = reservation is None or (
+                isinstance(value, dict) and value.get("ts") == reservation
+            )
+            if (
+                isinstance(value, dict)
+                and value.get("status") == status
+                and owns_reservation
+            ):
                 del state[pane_id]
                 temporary_name = ""
                 try:
@@ -178,15 +207,26 @@ def run_custom_speech(command_value: Any, text: str) -> str:
         raise ValueError("speak_command must not be empty")
     used_placeholder = any("{text}" in argument for argument in command_value)
     command = [argument.replace("{text}", text) for argument in command_value]
-    subprocess.run(
-        command,
-        check=True,
-        input=None if used_placeholder else text,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=60,
-    )
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            input=None if used_placeholder else text,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.SubprocessError as error:
+        # Keep the original exception class/instance for compatibility while
+        # ensuring its printable command cannot expose configured credentials.
+        if hasattr(error, "cmd"):
+            error.cmd = redact_command(command)
+        if isinstance(getattr(error, "stderr", None), str):
+            error.stderr = redact_command_text(error.stderr, command)
+        if isinstance(getattr(error, "output", None), str):
+            error.output = redact_command_text(error.output, command)
+        raise
     return "command"
 
 
@@ -404,7 +444,7 @@ def speak(
         return run_local_speech(config, text, reasons=reasons)
 
 
-def _capabilities() -> Dict[str, Optional[str]]:
+def capabilities() -> Dict[str, Optional[str]]:
     return {
         name: shutil.which(name)
         for name in (
@@ -424,16 +464,22 @@ def _capabilities() -> Dict[str, Optional[str]]:
     }
 
 
+# Compatibility alias for announce._capabilities and older package consumers.
+_capabilities = capabilities
+
+
 __all__ = [
     "DEBOUNCE_MAX_AGE_SECONDS",
     "PlaybackLockTimeout",
     "_capabilities",
     "_prune_debounce_state",
+    "capabilities",
     "check_and_record_debounce",
     "is_debounced",
     "load_debounce_state",
     "play_audio_file",
     "playback_lock",
+    "reserve_debounce",
     "rollback_debounce",
     "run_custom_speech",
     "run_local_speech",

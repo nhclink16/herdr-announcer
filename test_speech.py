@@ -1,4 +1,5 @@
 import json
+import math
 import subprocess
 import tempfile
 import unittest
@@ -86,6 +87,20 @@ class LocalBackendTests(unittest.TestCase):
         self.assertIn("spd-say: timeout", reasons)
 
 
+class CustomBackendTests(unittest.TestCase):
+    @mock.patch.object(speech.subprocess, "run")
+    def test_failed_command_keeps_exception_type_but_redacts_argv(self, run):
+        secret = "super-secret-1234"
+        command = ["speaker", "--api-key", secret]
+        run.side_effect = subprocess.CalledProcessError(2, command)
+
+        with self.assertRaises(subprocess.CalledProcessError) as caught:
+            speech.run_custom_speech(command, "hello")
+
+        self.assertEqual(caught.exception.cmd[-1], "****1234")
+        self.assertNotIn(secret, str(caught.exception))
+
+
 class ElevenLabsTests(unittest.TestCase):
     def config(self):
         config = dict(DEFAULTS)
@@ -140,6 +155,37 @@ class ElevenLabsTests(unittest.TestCase):
 
 
 class StateAndLockTests(unittest.TestCase):
+    def test_private_capabilities_name_aliases_public_api(self):
+        self.assertIs(speech._capabilities, speech.capabilities)
+
+    def test_old_rollback_cannot_delete_a_newer_reservation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+            with mock.patch.object(speech.time, "time", side_effect=(100.0, 131.0)):
+                first_debounced, first_token = speech.reserve_debounce(
+                    state_dir, "pane", "done", 30
+                )
+                second_debounced, second_token = speech.reserve_debounce(
+                    state_dir, "pane", "done", 30
+                )
+
+            self.assertFalse(first_debounced)
+            self.assertFalse(second_debounced)
+            self.assertNotEqual(first_token, second_token)
+            speech.rollback_debounce(state_dir, "pane", "done", first_token)
+
+            state = speech.load_debounce_state(state_dir / "last.json")
+
+        self.assertEqual(state["pane"]["ts"], second_token)
+
+    def test_nonfinite_and_future_timestamps_do_not_debounce(self):
+        for timestamp in (math.inf, math.nan, 101.0):
+            with self.subTest(timestamp=timestamp):
+                state = {"pane": {"status": "done", "ts": timestamp}}
+                self.assertFalse(
+                    speech.is_debounced(state, "pane", "done", 100.0, 30)
+                )
+
     def test_debounce_record_and_rollback_use_real_lock_file(self):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory)
@@ -203,6 +249,28 @@ class StateAndLockTests(unittest.TestCase):
                 held.close()
 
         self.assertEqual(reasons, ["playback-lock: timeout"])
+
+    def test_preexisting_unlocked_playback_file_is_acquired(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+            (state_dir / "speak.lock").touch()
+
+            with speech.playback_lock(state_dir):
+                acquired = True
+
+        self.assertTrue(acquired)
+
+    def test_playback_lock_is_released_when_body_raises(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                with speech.playback_lock(state_dir):
+                    raise RuntimeError("boom")
+
+            with speech.playback_lock(state_dir, timeout=0.0):
+                acquired_again = True
+
+        self.assertTrue(acquired_again)
 
 
 if __name__ == "__main__":

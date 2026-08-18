@@ -15,15 +15,14 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from announcer.config import *  # noqa: F401,F403
 from announcer.herdr import *  # noqa: F401,F403
+from announcer.log import *  # noqa: F401,F403
+from announcer.paths import *  # noqa: F401,F403
+from announcer.redact import mask_secret, redact_command, redact_command_text
 from announcer.speech import *  # noqa: F401,F403
+from announcer.snooze import *  # noqa: F401,F403
 from announcer.summarize import *  # noqa: F401,F403
 from announcer.tui import *  # noqa: F401,F403
 from announcer.wizard import *  # noqa: F401,F403
-
-
-PLUGIN_ID = "nhclink16.announcer"
-LOG_MAX_BYTES = 512 * 1024
-LOG_TAIL_BYTES = 256 * 1024
 
 
 def make_announcement(
@@ -126,20 +125,16 @@ def process_invocation(
     # Snooze is checked AFTER the status filter and BEFORE debounce: an event
     # nobody subscribed to keeps logging the truthful skipped-status, so
     # action=snoozed marks exactly the announcements the snooze silenced.
-    try:
-        with (state_dir / "snooze.json").open("r", encoding="utf-8") as handle:
-            snooze_until = float(json.load(handle).get("until") or 0)
-    except (OSError, ValueError, TypeError, AttributeError):
-        snooze_until = 0.0
-    # The upper bound rejects a corrupt Infinity deadline (json parses it),
-    # which would otherwise mute every announcement forever.
-    if time.time() < snooze_until < float("inf"):
+    if read_snooze(state_dir) > 0.0:
         return "snoozed"
 
     debounce_value = config.get("debounce_seconds")
     if isinstance(debounce_value, bool) or not isinstance(debounce_value, int):
         raise ValueError("debounce_seconds must be an integer")
-    if check_and_record_debounce(state_dir, pane_id, status, debounce_value):
+    debounced, reservation = reserve_debounce(
+        state_dir, pane_id, status, debounce_value
+    )
+    if debounced:
         return "debounced"
 
     try:
@@ -154,87 +149,12 @@ def process_invocation(
         try:
             backend = speak(config, announcement, state_dir, reasons)
         except PlaybackLockTimeout:
-            rollback_debounce(state_dir, pane_id, status)
+            rollback_debounce(state_dir, pane_id, status, reservation)
             return "gave-up-waiting"
     except Exception:
-        rollback_debounce(state_dir, pane_id, status)
+        rollback_debounce(state_dir, pane_id, status, reservation)
         raise
     return "announced+summary-{}+speak-{}".format(summary_backend, backend)
-
-
-def _log_field(value: str) -> str:
-    return " ".join(value.split()) or "-"
-
-
-def _trim_log(path: Path) -> None:
-    try:
-        if path.stat().st_size <= LOG_MAX_BYTES:
-            return
-        with path.open("rb") as handle:
-            handle.seek(-min(LOG_TAIL_BYTES, path.stat().st_size), os.SEEK_END)
-            tail = handle.read()
-    except FileNotFoundError:
-        return
-    newline = tail.find(b"\n")
-    tail = tail[newline + 1 :] if newline >= 0 else b""
-    temporary_name = ""
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            dir=str(path.parent),
-            prefix="announcer.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temporary_name = handle.name
-            handle.write(tail)
-        os.replace(temporary_name, str(path))
-        temporary_name = ""
-    finally:
-        if temporary_name:
-            try:
-                os.unlink(temporary_name)
-            except FileNotFoundError:
-                pass
-
-
-def log_invocation(
-    state_dir: Path,
-    pane_id: str,
-    status: str,
-    action: str,
-    elapsed: float,
-    traceback_text: str = "",
-    reasons: Optional[Sequence[str]] = None,
-) -> None:
-    import fcntl
-
-    timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-    line = "{} pane_id={} status={} action={} elapsed={:.3f}".format(
-        timestamp,
-        _log_field(pane_id),
-        _log_field(status),
-        _log_field(action),
-        elapsed,
-    )
-    if reasons:
-        line += " reasons={}".format(
-            ";".join(_log_field(str(reason)) for reason in reasons)
-        )
-    line += "\n"
-    log_path = state_dir / "announcer.log"
-    with (state_dir / "announcer-log.lock").open("a+") as lock_handle:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
-        try:
-            _trim_log(log_path)
-            with log_path.open("a", encoding="utf-8") as handle:
-                handle.write(line)
-                if traceback_text:
-                    handle.write(traceback_text)
-                    if not traceback_text.endswith("\n"):
-                        handle.write("\n")
-        finally:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 def _write_json_atomic(path: Path, payload: Dict[str, Any]) -> None:
@@ -291,7 +211,7 @@ def show_status(config_dir: Path, state_dir: Path) -> int:
     config_path = config_dir / "config.toml"
     unknown_keys: List[str] = []
     config = load_config(config_dir, unknown_keys=unknown_keys)
-    capabilities = _capabilities()
+    detected = capabilities()
     print("herdr-announcer status")
     print(
         "config: {} ({})".format(
@@ -303,7 +223,9 @@ def show_status(config_dir: Path, state_dir: Path) -> int:
     for key in DEFAULTS:
         value = config[key]
         if key == "elevenlabs_api_key" and value:
-            value = str(value)[:4] + "..."
+            value = mask_secret(str(value))
+        elif key in ("summary_command", "speak_command") and isinstance(value, list):
+            value = redact_command([str(argument) for argument in value])
         print("  {} = {}".format(key, json.dumps(value)))
     print("capabilities:")
     for name in (
@@ -320,7 +242,7 @@ def show_status(config_dir: Path, state_dir: Path) -> int:
         "pw-play",
         "aplay",
     ):
-        print("  {}: {}".format(name, "yes" if capabilities[name] else "no"))
+        print("  {}: {}".format(name, "yes" if detected[name] else "no"))
     print(
         "unrecognized keys: {}".format(
             ", ".join(unknown_keys) if unknown_keys else "none"
@@ -330,45 +252,32 @@ def show_status(config_dir: Path, state_dir: Path) -> int:
     if last_error is None:
         print("last error: none")
     else:
-        print("last error: {} {}".format(last_error[0], ";".join(last_error[1])))
+        detail = _redact_configured_text(";".join(last_error[1]), config)
+        print("last error: {} {}".format(last_error[0], detail))
     log_path = state_dir / "announcer.log"
     if log_path.exists():
         print("log (last 8 lines):")
         with log_path.open("r", encoding="utf-8", errors="replace") as handle:
             lines = handle.readlines()[-8:]
         for line in lines:
-            print("  " + line.rstrip("\n"))
+            print("  " + _redact_configured_text(line.rstrip("\n"), config))
     else:
         print("log: not found ({})".format(log_path))
     return 0
 
 
-def _resolve_dirs_without_env() -> Tuple[Path, Path]:
-    """Locate plugin dirs when run from a plain terminal (no Herdr env)."""
-    config_dir = ""
-    try:
-        result = subprocess.run(
-            [
-                os.environ.get("HERDR_BIN_PATH") or "herdr",
-                "plugin",
-                "config-dir",
-                PLUGIN_ID,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            config_dir = result.stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        pass
-    if not config_dir:
-        config_dir = str(
-            Path.home() / ".config" / "herdr" / "plugins" / "config" / PLUGIN_ID
-        )
-    state_dir = Path.home() / ".local" / "state" / "herdr" / "plugins" / PLUGIN_ID
-    return Path(config_dir), state_dir
+def _redact_configured_text(text: str, config: Dict[str, Any]) -> str:
+    redacted = text
+    for key in ("summary_command", "speak_command"):
+        command = config.get(key)
+        if isinstance(command, list) and all(
+            isinstance(argument, str) for argument in command
+        ):
+            redacted = redact_command_text(redacted, command)
+    api_key = str(config.get("elevenlabs_api_key") or "")
+    if api_key:
+        redacted = redacted.replace(api_key, mask_secret(api_key))
+    return redacted
 
 
 def _argument_parser() -> argparse.ArgumentParser:
@@ -390,12 +299,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_usage(sys.stderr)
         return 2
 
-    config_dir = Path(os.environ.get("HERDR_PLUGIN_CONFIG_DIR") or ".")
-    state_dir = Path(os.environ.get("HERDR_PLUGIN_STATE_DIR") or ".")
-    if (arguments.test or arguments.command in ("setup", "status")) and not os.environ.get(
-        "HERDR_PLUGIN_CONFIG_DIR"
-    ):
-        config_dir, state_dir = _resolve_dirs_without_env()
+    config_dir, state_dir = resolve_dirs()
 
     if arguments.command == "status":
         try:

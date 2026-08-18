@@ -6,20 +6,22 @@ import platform
 import shlex
 import shutil
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, MutableMapping, Optional, Sequence, Set, Tuple
 
 from .config import DEFAULTS, _load_tiny_toml, load_config, tomllib
-from .speech import _capabilities, speak
+from .redact import mask_secret
+from .speech import capabilities, speak
 from .summarize import ANNOUNCEMENT_PROMPT
 from .tui import (
-    _c,
-    _tty_active,
     ask_confirm,
     ask_multiselect,
     ask_secret,
     ask_select,
     ask_text,
+    colorize,
+    tty_active,
 )
 
 
@@ -35,7 +37,7 @@ def _toml_value(value: Any) -> str:
     raise ValueError("cannot write configuration value")
 
 
-def _load_raw_config(path: Path) -> Dict[str, Any]:
+def load_raw_config(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
     try:
@@ -45,6 +47,224 @@ def _load_raw_config(path: Path) -> Dict[str, Any]:
         return _load_tiny_toml(path)
     except (OSError, ValueError):
         return {}
+
+
+@contextmanager
+def config_lock(path: Path) -> Iterator[None]:
+    """Serialize config read-modify-write transactions across processes."""
+    import fcntl
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name("config.toml.lock")
+    with lock_path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _assignment_separator(line: str) -> int:
+    quote = ""
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote == '"':
+            escaped = True
+            continue
+        if char in ('"', "'"):
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ""
+            continue
+        if char == "#" and not quote:
+            return -1
+        if char == "=" and not quote:
+            return index
+    return -1
+
+
+def _known_key(raw_key: str) -> Optional[str]:
+    key = raw_key.strip()
+    if key in DEFAULTS:
+        return key
+    if len(key) < 2 or key[0] != key[-1] or key[0] not in ('"', "'"):
+        return None
+    if key[0] == "'":
+        decoded = key[1:-1]
+    else:
+        decoded_parts: List[str] = []
+        content = key[1:-1]
+        index = 0
+        escapes = {
+            '"': '"',
+            "\\": "\\",
+            "b": "\b",
+            "t": "\t",
+            "n": "\n",
+            "f": "\f",
+            "r": "\r",
+        }
+        while index < len(content):
+            if content[index] != "\\":
+                decoded_parts.append(content[index])
+                index += 1
+                continue
+            index += 1
+            if index >= len(content):
+                return None
+            escape = content[index]
+            if escape in escapes:
+                decoded_parts.append(escapes[escape])
+                index += 1
+                continue
+            if escape not in ("u", "U"):
+                return None
+            digits = 4 if escape == "u" else 8
+            encoded = content[index + 1:index + 1 + digits]
+            if len(encoded) != digits:
+                return None
+            try:
+                decoded_parts.append(chr(int(encoded, 16)))
+            except (ValueError, OverflowError):
+                return None
+            index += digits + 1
+        decoded = "".join(decoded_parts)
+    return decoded if decoded in DEFAULTS else None
+
+
+def _toml_value_end(text: str, start: int) -> int:
+    """Return the end of one TOML value, including its final newline."""
+    square_depth = 0
+    curly_depth = 0
+    quote = ""
+    triple = False
+    escaped = False
+    comment = False
+    index = start
+    while index < len(text):
+        char = text[index]
+        if comment:
+            if char == "\n":
+                comment = False
+                if square_depth == 0 and curly_depth == 0:
+                    return index + 1
+            index += 1
+            continue
+        if quote:
+            if escaped:
+                escaped = False
+                index += 1
+                continue
+            if quote == '"' and char == "\\":
+                escaped = True
+                index += 1
+                continue
+            if triple and char == quote:
+                run_end = index
+                while run_end < len(text) and text[run_end] == quote:
+                    run_end += 1
+                if run_end - index >= 3:
+                    quote = ""
+                    triple = False
+                index = run_end
+                continue
+            if not triple and char == quote:
+                quote = ""
+                index += 1
+                continue
+            index += 1
+            continue
+        if char == "#":
+            comment = True
+            index += 1
+            continue
+        if text.startswith('\"\"\"', index) or text.startswith("'''", index):
+            quote = char
+            triple = True
+            index += 3
+            continue
+        if char in ('"', "'"):
+            quote = char
+            index += 1
+            continue
+        if char == "[":
+            square_depth += 1
+        elif char == "]" and square_depth:
+            square_depth -= 1
+        elif char == "{":
+            curly_depth += 1
+        elif char == "}" and curly_depth:
+            curly_depth -= 1
+        elif char == "\n" and square_depth == 0 and curly_depth == 0:
+            return index + 1
+        index += 1
+    return len(text)
+
+
+def _known_assignment_spans(text: str) -> Dict[str, List[Tuple[int, int]]]:
+    spans: Dict[str, List[Tuple[int, int]]] = {}
+    offset = 0
+    while offset < len(text):
+        newline = text.find("\n", offset)
+        line_end = len(text) if newline < 0 else newline + 1
+        line = text[offset:line_end]
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            offset = line_end
+            continue
+        if stripped.startswith("["):
+            break
+        separator = _assignment_separator(line)
+        if separator < 0:
+            offset = line_end
+            continue
+        end = _toml_value_end(text, offset + separator + 1)
+        key = _known_key(line[:separator])
+        if key is not None:
+            spans.setdefault(key, []).append((offset, end))
+        offset = end
+    return spans
+
+
+def _top_level_known_keys(path: Path) -> Set[str]:
+    if not path.exists():
+        return set()
+    text = path.read_text(encoding="utf-8")
+    return set(_known_assignment_spans(text))
+
+
+def _rewrite_config_text(
+    original: str,
+    config: Dict[str, Any],
+    keys_to_write: Sequence[str],
+    keys_to_replace: Sequence[str],
+) -> str:
+    spans = _known_assignment_spans(original)
+    removed = [
+        span
+        for key in keys_to_replace
+        for span in spans.get(key, [])
+    ]
+    removed.sort()
+    pieces: List[str] = []
+    cursor = 0
+    for start, end in removed:
+        pieces.append(original[cursor:start])
+        cursor = end
+    pieces.append(original[cursor:])
+    preserved = "".join(pieces)
+    write_keys = set(keys_to_write)
+    lines = [
+        "{} = {}".format(key, _toml_value(config[key]))
+        for key in DEFAULTS
+        if key in write_keys and config.get(key) is not None
+    ]
+    prefix = "".join(line + "\n" for line in lines)
+    return prefix + preserved
 
 
 def _config_lines(
@@ -59,16 +279,15 @@ def _config_lines(
     ]
 
 
-def _write_config(
-    path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
+def _write_config_unlocked(
+    path: Path,
+    config: Dict[str, Any],
+    keys_to_write: Sequence[str],
+    keys_to_replace: Optional[Sequence[str]] = None,
 ) -> None:
-    lines = _config_lines(config, explicitly_chosen)
-    # Carry unknown keys forward so future plugin versions' settings survive.
-    extras = {
-        key: value
-        for key, value in _load_raw_config(path).items()
-        if key not in DEFAULTS
-    }
+    replace = keys_to_write if keys_to_replace is None else keys_to_replace
+    original = path.read_text(encoding="utf-8") if path.exists() else ""
+    rewritten = _rewrite_config_text(original, config, keys_to_write, replace)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         shutil.copy2(str(path), str(path.with_name("config.toml.bak")))
@@ -83,13 +302,7 @@ def _write_config(
             delete=False,
         ) as handle:
             temporary_name = handle.name
-            for line in lines:
-                handle.write(line + "\n")
-            for key, value in extras.items():
-                try:
-                    handle.write("{} = {}\n".format(key, _toml_value(value)))
-                except ValueError:
-                    pass
+            handle.write(rewritten)
         os.replace(temporary_name, str(path))
         temporary_name = ""
     finally:
@@ -99,6 +312,55 @@ def _write_config(
             except FileNotFoundError:
                 pass
     print("Note: wizard writes do not preserve comments from hand-edited files.")
+
+
+def _restore_file(path: Path, contents: Optional[bytes], mode: Optional[int]) -> None:
+    """Atomically restore a setup snapshot, or remove a newly-created file."""
+    if contents is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    if path.exists() and path.read_bytes() == contents:
+        if mode is not None and (path.stat().st_mode & 0o7777) != mode:
+            path.chmod(mode)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=str(path.parent),
+            prefix="{}.restore.".format(path.name),
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_name = handle.name
+            handle.write(contents)
+        if mode is not None:
+            os.chmod(temporary_name, mode)
+        os.replace(temporary_name, str(path))
+        temporary_name = ""
+    finally:
+        if temporary_name:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+
+
+def write_config(
+    path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
+) -> None:
+    """Atomically rebase chosen keys while preserving unknown TOML text."""
+    with config_lock(path):
+        chosen = [
+            key
+            for key in explicitly_chosen
+            if key in DEFAULTS and key in config
+        ]
+        _write_config_unlocked(path, config, chosen)
 
 
 def _claude_summary_command() -> List[str]:
@@ -111,8 +373,7 @@ def _claude_summary_command() -> List[str]:
     ]
 
 
-def _mask_secret(value: str) -> str:
-    return "****{}".format(value[-4:]) if value else ""
+_mask_secret = mask_secret
 
 
 def _preview_line(line: str) -> str:
@@ -128,22 +389,25 @@ def _preview_line(line: str) -> str:
 def _setup_wizard(
     config_dir: Path,
     state_dir: Path,
-    write_state: Optional[MutableMapping[str, bool]] = None,
+    write_state: Optional[MutableMapping[str, Any]] = None,
 ) -> int:
     config_path = config_dir / "config.toml"
     existed = config_path.exists()
     config = load_config(config_dir)
     chosen: List[str] = []
-    capabilities = _capabilities()
-    fancy = _tty_active()
+    detected = capabilities()
+    fancy = tty_active()
 
-    print(_c("herdr-announcer setup", "1") if fancy else "herdr-announcer setup")
+    print(colorize("herdr-announcer setup", "1") if fancy else "herdr-announcer setup")
     print("Config: {}".format(config_path))
     print(
-        "{} Ctrl-C exits without writing anything.".format(
+        "{} {}".format(
             "Arrows move, Enter confirms."
             if fancy
-            else "Enter keeps the value in [brackets]."
+            else "Enter keeps the value in [brackets].",
+            "q quits choices; Esc or Ctrl-C exits without writing anything."
+            if fancy
+            else "q quits choices; Ctrl-C exits without writing anything.",
         )
     )
     print()
@@ -165,7 +429,7 @@ def _setup_wizard(
 
     has_custom_summary = bool(config.get("summary_command"))
     summary_options: List[Tuple[str, str]] = []
-    if capabilities["codex"]:
+    if detected["codex"]:
         summary_options.append(
             ("codex", "Codex - one-sentence summary via codex exec")
         )
@@ -173,7 +437,7 @@ def _setup_wizard(
         summary_options.append(
             ("command", "Custom - keep your current summary command")
         )
-    elif capabilities["claude"]:
+    elif detected["claude"]:
         summary_options.append(
             ("command", "Claude Code - one-sentence summary via claude -p")
         )
@@ -246,7 +510,7 @@ def _setup_wizard(
     local_names = [
         name
         for name in ("say", "spd-say", "espeak-ng", "espeak")
-        if capabilities[name]
+        if detected[name]
     ]
     detected = ", ".join(local_names) if local_names else "nothing detected!"
     voice_options = []
@@ -364,9 +628,10 @@ def _setup_wizard(
     if not write_now:
         print("Nothing written.")
         return 0
-    _write_config(config_path, config, chosen)
-    if write_state is not None:
-        write_state["written"] = True
+    if write_state is None:
+        write_config(config_path, config, chosen)
+    else:
+        _write_setup_config(config_path, config, chosen, write_state)
 
     test_voice, _unused = ask_confirm("Test the voice now?", True)
     if test_voice:
@@ -383,35 +648,131 @@ def _setup_wizard(
     return 0
 
 
+def _optional_file_state(path: Path) -> Tuple[Optional[bytes], Optional[int]]:
+    try:
+        return path.read_bytes(), path.stat().st_mode & 0o7777
+    except FileNotFoundError:
+        return None, None
+
+
+def _capture_setup_write_state(
+    write_state: MutableMapping[str, Any], config_path: Path, phase: str
+) -> None:
+    backup_path = config_path.with_name("config.toml.bak")
+    config_bytes, config_mode = _optional_file_state(config_path)
+    backup_bytes, backup_mode = _optional_file_state(backup_path)
+    write_state["config_{}_write".format(phase)] = config_bytes
+    write_state["config_{}_mode".format(phase)] = config_mode
+    write_state["backup_{}_write".format(phase)] = backup_bytes
+    write_state["backup_{}_mode".format(phase)] = backup_mode
+
+
+def _write_setup_config(
+    path: Path,
+    config: Dict[str, Any],
+    explicitly_chosen: Sequence[str],
+    write_state: MutableMapping[str, Any],
+) -> None:
+    """Write wizard choices while recording an exact rollback boundary."""
+    with config_lock(path):
+        _capture_setup_write_state(write_state, path, "before")
+        write_state["write_started"] = True
+        chosen = [
+            key
+            for key in explicitly_chosen
+            if key in DEFAULTS and key in config
+        ]
+        try:
+            _write_config_unlocked(path, config, chosen)
+            write_state["written"] = True
+            _capture_setup_write_state(write_state, path, "after")
+        except KeyboardInterrupt:
+            backup_path = path.with_name("config.toml.bak")
+            _restore_file(
+                path,
+                write_state.get("config_before_write"),
+                write_state.get("config_before_mode"),
+            )
+            _restore_file(
+                backup_path,
+                write_state.get("backup_before_write"),
+                write_state.get("backup_before_mode"),
+            )
+            write_state["written"] = False
+            write_state["rolled_back"] = True
+            raise
+
+
+def _setup_write_is_current(
+    write_state: MutableMapping[str, Any], config_path: Path
+) -> bool:
+    backup_path = config_path.with_name("config.toml.bak")
+    config_state = _optional_file_state(config_path)
+    backup_state = _optional_file_state(backup_path)
+    return config_state == (
+        write_state.get("config_after_write"),
+        write_state.get("config_after_mode"),
+    ) and backup_state == (
+        write_state.get("backup_after_write"),
+        write_state.get("backup_after_mode"),
+    )
+
+
 def run_setup(config_dir: Path, state_dir: Path) -> int:
     config_path = config_dir / "config.toml"
     backup_path = config_path.with_name("config.toml.bak")
-    original = config_path.read_bytes() if config_path.exists() else None
-    old_backup = backup_path.read_bytes() if backup_path.exists() else None
-    write_state = {"written": False}
+    write_state: MutableMapping[str, Any] = {"written": False}
+    _capture_setup_write_state(write_state, config_path, "before")
     try:
         return _setup_wizard(config_dir, state_dir, write_state)
     except KeyboardInterrupt:
-        if write_state["written"]:
-            print("\nsetup aborted after write; config was kept")
-            return 130
-        if original is None:
-            try:
-                config_path.unlink()
-            except FileNotFoundError:
-                pass
-        elif not config_path.exists() or config_path.read_bytes() != original:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_bytes(original)
-        if old_backup is None:
-            try:
-                backup_path.unlink()
-            except FileNotFoundError:
-                pass
-        elif not backup_path.exists() or backup_path.read_bytes() != old_backup:
-            backup_path.write_bytes(old_backup)
-        print("\nsetup aborted, nothing written")
+        restored = bool(write_state.get("rolled_back")) or (
+            not write_state.get("write_started")
+            and not write_state.get("written")
+        )
+        if write_state.get("written"):
+            with config_lock(config_path):
+                if _setup_write_is_current(write_state, config_path):
+                    _restore_file(
+                        config_path,
+                        write_state.get("config_before_write"),
+                        write_state.get("config_before_mode"),
+                    )
+                    _restore_file(
+                        backup_path,
+                        write_state.get("backup_before_write"),
+                        write_state.get("backup_before_mode"),
+                    )
+                    restored = True
+        if restored:
+            print("\nsetup aborted, nothing written")
+        else:
+            print("\nsetup aborted; config changed concurrently and was kept")
         return 130
+
+
+# Compatibility aliases retained for callers that imported these helpers from
+# announce.py or announcer.wizard before they gained public names.
+_load_raw_config = load_raw_config
+
+
+def _write_config(
+    path: Path, config: Dict[str, Any], explicitly_chosen: Sequence[str]
+) -> None:
+    """Preserve the pre-0.9.0 private writer's full-config semantics."""
+    with config_lock(path):
+        chosen = {
+            key
+            for key in explicitly_chosen
+            if key in DEFAULTS and key in config
+        }
+        chosen.update(
+            key
+            for key in DEFAULTS
+            if key in config and config.get(key) != DEFAULTS[key]
+        )
+        replace = chosen | _top_level_known_keys(path)
+        _write_config_unlocked(path, config, sorted(chosen), sorted(replace))
 
 
 __all__ = [
@@ -423,5 +784,8 @@ __all__ = [
     "_setup_wizard",
     "_toml_value",
     "_write_config",
+    "config_lock",
+    "load_raw_config",
     "run_setup",
+    "write_config",
 ]

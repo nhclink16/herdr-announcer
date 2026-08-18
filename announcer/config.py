@@ -113,20 +113,31 @@ def _parse_fallback_value(value: str) -> Any:
         return False
     try:
         return int(value)
-    except ValueError as exc:
-        raise ValueError("unsupported configuration value: {}".format(value)) from exc
+    except ValueError:
+        try:
+            return float(value)
+        except ValueError as exc:
+            raise ValueError(
+                "unsupported configuration value: {}".format(value)
+            ) from exc
 
 
 def _load_tiny_toml(
     path: Path, reasons: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     parsed: Dict[str, Any] = {}
+    in_table = False
     with path.open("r", encoding="utf-8") as handle:
         for line_number, raw_line in enumerate(handle, 1):
             line = _strip_comment(raw_line)
             if not line:
                 continue
             try:
+                if line.startswith("["):
+                    in_table = True
+                    raise ValueError
+                if in_table:
+                    raise ValueError
                 if "=" not in line:
                     raise ValueError
                 key, raw_value = line.split("=", 1)

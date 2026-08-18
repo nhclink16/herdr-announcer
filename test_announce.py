@@ -1,5 +1,6 @@
 import io
 import json
+import math
 import queue
 import subprocess
 import threading
@@ -117,6 +118,56 @@ class SummaryFallbackTests(unittest.TestCase):
         )
 
         self.assertIsNone(result)
+        run.assert_not_called()
+
+    @mock.patch.object(announce.subprocess, "Popen")
+    def test_codex_nonfinite_timeouts_fall_back_before_spawn(self, popen):
+        for key in (
+            "summary_first_activity_timeout_seconds",
+            "codex_timeout_seconds",
+        ):
+            for value in (math.nan, math.inf, -math.inf):
+                with self.subTest(key=key, value=value):
+                    config = self.config()
+                    config[key] = value
+                    reasons = []
+
+                    result = announce.codex_summary(
+                        config,
+                        "builder",
+                        "billing",
+                        "done",
+                        "test output",
+                        reasons,
+                    )
+
+                    self.assertIsNone(result)
+                    self.assertTrue(reasons)
+        popen.assert_not_called()
+
+    @mock.patch.object(announce.subprocess, "run")
+    def test_command_nonfinite_timeouts_fall_back_before_spawn(self, run):
+        for key in (
+            "summary_first_activity_timeout_seconds",
+            "summary_command_timeout_seconds",
+        ):
+            for value in (math.nan, math.inf, -math.inf):
+                with self.subTest(key=key, value=value):
+                    config = self.config()
+                    config[key] = value
+                    reasons = []
+
+                    result = announce.command_summary(
+                        config,
+                        "builder",
+                        "billing",
+                        "done",
+                        "test output",
+                        reasons,
+                    )
+
+                    self.assertIsNone(result)
+                    self.assertTrue(reasons)
         run.assert_not_called()
 
     def test_codex_no_model_activity_times_out(self):

@@ -24,6 +24,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import announce
 import dashboard
+from announcer import config_io
 
 
 NOW = 1_700_000_000.0
@@ -77,25 +78,6 @@ def capture():
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         yield out, err
-
-
-def kit_holder(name):
-    """The module that currently owns a kit helper (seam-proof patch target)."""
-    return dashboard.kit if hasattr(dashboard.kit, name) else dashboard.core
-
-
-@contextlib.contextmanager
-def without_attribute(obj, name):
-    """Temporarily delete an attribute (models the coming refactor)."""
-    missing = object()
-    original = getattr(obj, name, missing)
-    if original is not missing:
-        delattr(obj, name)
-    try:
-        yield
-    finally:
-        if original is not missing:
-            setattr(obj, name, original)
 
 
 def entry(action="announced", timestamp="2026-08-17T12:04:11+02:00",
@@ -909,13 +891,17 @@ class DerivedValueTests(DashboardTestCase):
         self.assertEqual(set(dashboard.STATE_HELP), set(dashboard.STATE_ORDER))
 
     def test_voice_backend_label_prefers_a_custom_command(self):
-        config = {"speak_command": ["say", "-v", "Alex"],
+        config = {"speak_command": [
+                      "speaker", "--api-key", "super-secret-1234"
+                  ],
                   "elevenlabs_api_key": "key"}
 
         label = dashboard.voice_backend_label(config, {})
 
         self.assertTrue(label.startswith("custom command  "), label)
-        self.assertIn("say", label)
+        self.assertIn("speaker", label)
+        self.assertIn("****1234", label)
+        self.assertNotIn("super-secret", label)
 
     def test_voice_backend_label_marks_an_invalid_custom_command(self):
         config = {"speak_command": "say -v Alex"}
@@ -1278,7 +1264,7 @@ class RenderTests(DashboardTestCase):
         board, _unused = self.board()
         with mock.patch.object(dashboard, "read_log") as read_log, \
                 mock.patch.object(dashboard, "read_snooze") as read_snooze, \
-                mock.patch.object(dashboard.core, "load_config") as load_config, \
+                mock.patch.object(dashboard, "load_config") as load_config, \
                 mock.patch.object(dashboard.subprocess, "Popen") as popen, \
                 mock.patch.object(dashboard.time, "time") as clock:
             board.render()
@@ -1348,25 +1334,25 @@ class KeyDispatchTests(DashboardTestCase):
         self.assertFalse(board.owns_terminal)
 
     def test_owns_terminal_stays_false_on_a_tty_when_io_is_injected(self):
-        with mock.patch.object(dashboard.kit, "_tty_active", return_value=True):
+        with mock.patch.object(dashboard.kit, "tty_active", return_value=True):
             board, _unused = make_dashboard(self.tmp)
 
             self.assertFalse(board.owns_terminal)
 
     def test_owns_terminal_is_true_only_without_injected_io(self):
-        with mock.patch.object(dashboard.kit, "_tty_active", return_value=True):
+        with mock.patch.object(dashboard.kit, "tty_active", return_value=True):
             with capture() as (out, err):
                 board = dashboard.Dashboard(self.config_dir, self.state_dir)
 
             self.assertTrue(board.owns_terminal)
 
     def test_run_uses_raw_mode_when_it_owns_the_terminal(self):
-        with mock.patch.object(dashboard.kit, "_tty_active", return_value=True), \
-                mock.patch.object(dashboard.kit, "_read_key",
+        with mock.patch.object(dashboard.kit, "tty_active", return_value=True), \
+                mock.patch.object(dashboard.kit, "read_key",
                                   return_value="q"), \
-                mock.patch.object(dashboard.kit, "_raw_mode") as raw_mode, \
-                mock.patch.object(dashboard.kit, "_hide_cursor") as hide, \
-                mock.patch.object(dashboard.kit, "_show_cursor") as show:
+                mock.patch.object(dashboard.kit, "raw_mode") as raw_mode, \
+                mock.patch.object(dashboard.kit, "hide_cursor") as hide, \
+                mock.patch.object(dashboard.kit, "show_cursor") as show:
             with capture() as (out, err):
                 board = dashboard.Dashboard(
                     self.config_dir, self.state_dir,
@@ -1730,9 +1716,9 @@ class KeyDispatchTests(DashboardTestCase):
 
     def test_run_never_touches_terminal_modes_with_injected_io(self):
         board, _unused = self.board(keys=["q"])
-        with mock.patch.object(dashboard.kit, "_raw_mode") as raw_mode, \
-                mock.patch.object(dashboard.kit, "_hide_cursor") as hide, \
-                mock.patch.object(dashboard.kit, "_show_cursor") as show:
+        with mock.patch.object(dashboard.kit, "raw_mode") as raw_mode, \
+                mock.patch.object(dashboard.kit, "hide_cursor") as hide, \
+                mock.patch.object(dashboard.kit, "show_cursor") as show:
             board.run()
 
         raw_mode.assert_not_called()
@@ -1921,7 +1907,7 @@ class SubcommandTests(DashboardTestCase):
 
     def test_no_argv_without_a_tty_writes_a_plain_snapshot(self):
         self.write_log([log_line(action="announced")])
-        with mock.patch.object(dashboard.kit, "_tty_active", return_value=False), \
+        with mock.patch.object(dashboard.kit, "tty_active", return_value=False), \
                 mock.patch.object(dashboard.Dashboard, "run") as run:
             with capture() as (out, err):
                 code = dashboard.main([])
@@ -1934,7 +1920,7 @@ class SubcommandTests(DashboardTestCase):
         self.assertTrue(text.endswith("\n"))
 
     def test_no_argv_with_a_tty_runs_the_dashboard(self):
-        with mock.patch.object(dashboard.kit, "_tty_active", return_value=True), \
+        with mock.patch.object(dashboard.kit, "tty_active", return_value=True), \
                 mock.patch.object(dashboard.Dashboard, "run",
                                   return_value=0) as run:
             with capture() as (out, err):
@@ -2056,8 +2042,7 @@ class ConfigRoundTripTests(DashboardTestCase):
         self.assertEqual(announce.load_config(self.config_dir)["announce"], [])
 
     def test_write_config_keys_goes_through_the_kit(self):
-        holder = kit_holder("_write_config")
-        with mock.patch.object(holder, "_write_config") as write_config:
+        with mock.patch.object(config_io, "write_config") as write_config:
             dashboard.write_config_keys(self.config_dir, {"toast": True})
 
         write_config.assert_called_once()
@@ -2083,7 +2068,7 @@ class ConfigRoundTripTests(DashboardTestCase):
         with mock.patch.dict(os.environ, {}):
             os.environ.pop("HERDR_PLUGIN_CONFIG_DIR", None)
             os.environ.pop("HERDR_PLUGIN_STATE_DIR", None)
-            with mock.patch.object(dashboard.core, "_resolve_dirs_without_env",
+            with mock.patch.object(dashboard, "_resolve_dirs_without_env",
                                    return_value=fallback) as resolver:
                 result = dashboard.resolve_dirs()
 
@@ -2094,7 +2079,7 @@ class ConfigRoundTripTests(DashboardTestCase):
         fallback = (self.tmp / "fallback-config", self.tmp / "fallback-state")
         with mock.patch.dict(os.environ, {}):
             os.environ.pop("HERDR_PLUGIN_STATE_DIR", None)
-            with mock.patch.object(dashboard.core, "_resolve_dirs_without_env",
+            with mock.patch.object(dashboard, "_resolve_dirs_without_env",
                                    return_value=fallback):
                 config_dir, state_dir = dashboard.resolve_dirs()
 
@@ -2104,24 +2089,12 @@ class ConfigRoundTripTests(DashboardTestCase):
     def test_resolve_dirs_ignores_empty_environment_values(self):
         fallback = (self.tmp / "fallback-config", self.tmp / "fallback-state")
         with mock.patch.dict(os.environ, {"HERDR_PLUGIN_CONFIG_DIR": ""}), \
-                mock.patch.object(dashboard.core, "_resolve_dirs_without_env",
+                mock.patch.object(dashboard, "_resolve_dirs_without_env",
                                   return_value=fallback):
             config_dir, state_dir = dashboard.resolve_dirs()
 
         self.assertEqual(config_dir, fallback[0])
         self.assertEqual(state_dir, Path(str(self.state_dir)))
-
-    def test_resolve_dirs_survives_the_resolver_disappearing(self):
-        with mock.patch.dict(os.environ, {}):
-            os.environ.pop("HERDR_PLUGIN_CONFIG_DIR", None)
-            os.environ.pop("HERDR_PLUGIN_STATE_DIR", None)
-            with without_attribute(dashboard.core, "_resolve_dirs_without_env"):
-                self.assertFalse(
-                    hasattr(dashboard.core, "_resolve_dirs_without_env")
-                )
-                result = dashboard.resolve_dirs()
-
-        self.assertEqual(result, dashboard._local_resolve_dirs())
 
     def test_local_resolve_dirs_uses_the_documented_literals(self):
         config_dir, state_dir = dashboard._local_resolve_dirs()
@@ -2150,21 +2123,30 @@ class ConfigRoundTripTests(DashboardTestCase):
 
 
 class SuiteInvariantTests(unittest.TestCase):
-    def test_dashboard_reaches_the_kit_through_the_seam(self):
-        for name in ("_frame", "_read_key", "_raw_mode", "_c", "_tty_active",
-                     "_hide_cursor", "_show_cursor"):
-            with self.subTest(name=name):
-                self.assertTrue(hasattr(dashboard.kit, name))
+    def test_root_dashboard_is_the_package_implementation(self):
+        self.assertEqual(dashboard.__name__, "announcer.dashboard")
 
-    def test_kit_attr_resolves_helpers_at_call_time(self):
-        self.assertIs(dashboard._kit_attr("_load_raw_config"),
-                      getattr(dashboard.kit, "_load_raw_config",
-                              getattr(dashboard.core, "_load_raw_config")))
-        self.assertTrue(callable(dashboard._kit_attr("_write_config")))
+    def test_script_dir_remains_the_plugin_root(self):
+        self.assertTrue((dashboard.SCRIPT_DIR / "announce.py").is_file())
+        self.assertTrue((dashboard.SCRIPT_DIR / "dashboard.py").is_file())
 
-    def test_kit_attr_raises_for_an_unknown_helper(self):
-        with self.assertRaises(AttributeError):
-            dashboard._kit_attr("_definitely_not_a_kit_function")
+    def test_tui_private_names_alias_the_public_api(self):
+        pairs = (
+            ("_frame", "frame"),
+            ("_read_key", "read_key"),
+            ("_raw_mode", "raw_mode"),
+            ("_c", "colorize"),
+            ("_tty_active", "tty_active"),
+            ("_hide_cursor", "hide_cursor"),
+            ("_show_cursor", "show_cursor"),
+            ("_collapse", "collapse"),
+        )
+        for private, public in pairs:
+            with self.subTest(private=private):
+                self.assertIs(
+                    getattr(dashboard.kit, private),
+                    getattr(dashboard.kit, public),
+                )
 
     def test_announce_never_imports_dashboard(self):
         saved = sys.modules.pop("dashboard", None)
@@ -2280,15 +2262,14 @@ class RegressionTests(DashboardTestCase):
             self.assertEqual(board.message, dashboard.CONFIG_UNREADABLE)
 
     def test_config_writes_print_nothing_to_stdout(self):
-        holder = kit_holder("_write_config")
-        original = holder._write_config
+        original = config_io.write_config
 
         def noisy(path, config, chosen):
             print("Note: wizard writes do not preserve comments")
             return original(path, config, chosen)
 
         board, fake_io = self.board()
-        with mock.patch.object(holder, "_write_config", noisy):
+        with mock.patch.object(config_io, "write_config", noisy):
             with capture() as (out, _err):
                 board.toggle_toast()
 
@@ -2296,10 +2277,9 @@ class RegressionTests(DashboardTestCase):
         self.assertEqual(fake_io.written, [])
 
     def test_a_failed_config_write_is_reported_not_raised(self):
-        holder = kit_holder("_write_config")
         board, _unused = self.board()
         board.index = 1
-        with mock.patch.object(holder, "_write_config",
+        with mock.patch.object(config_io, "write_config",
                                side_effect=OSError("read-only file system")):
             board.activate()
 
@@ -2309,11 +2289,10 @@ class RegressionTests(DashboardTestCase):
 
     def test_a_failed_state_write_leaves_the_config_untouched(self):
         self.write_config('announce = ["done"]\n')
-        holder = kit_holder("_write_config")
         board, _unused = self.board()
         board.refresh()
         board.index = 3          # the "idle" state row
-        with mock.patch.object(holder, "_write_config",
+        with mock.patch.object(config_io, "write_config",
                                side_effect=OSError("read-only file system")):
             board.activate()
 
@@ -2325,10 +2304,9 @@ class RegressionTests(DashboardTestCase):
         self.assertEqual(len(board.render()), board.frame_height)
 
     def test_a_failed_toast_write_leaves_the_config_untouched(self):
-        holder = kit_holder("_write_config")
         board, _unused = self.board()
         board.index = 6
-        with mock.patch.object(holder, "_write_config",
+        with mock.patch.object(config_io, "write_config",
                                side_effect=ValueError("bad toml")):
             board.activate()
 
@@ -2452,7 +2430,7 @@ class RegressionTests(DashboardTestCase):
         self.assertTrue(board.wizard_requested)
 
     def test_a_too_small_terminal_falls_back_to_the_snapshot(self):
-        with mock.patch.object(dashboard.kit, "_tty_active", return_value=True), \
+        with mock.patch.object(dashboard.kit, "tty_active", return_value=True), \
                 mock.patch.object(dashboard, "terminal_fits",
                                   return_value=False), \
                 mock.patch.object(dashboard.Dashboard, "run") as run:
@@ -2465,7 +2443,7 @@ class RegressionTests(DashboardTestCase):
         self.assertIn("static snapshot", err.getvalue())
 
     def test_a_large_enough_terminal_runs_the_dashboard(self):
-        with mock.patch.object(dashboard.kit, "_tty_active", return_value=True), \
+        with mock.patch.object(dashboard.kit, "tty_active", return_value=True), \
                 mock.patch.object(dashboard, "terminal_fits",
                                   return_value=True), \
                 mock.patch.object(dashboard.Dashboard, "run",
