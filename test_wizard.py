@@ -372,6 +372,50 @@ class WizardFlowTests(unittest.TestCase):
         self.assertEqual(loaded["voice"], "Alex")
         self.assertIn("changed concurrently", output.getvalue())
 
+    def test_interrupt_inside_config_write_restores_before_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_dir = root / "config"
+            config_dir.mkdir()
+            path = config_dir / "config.toml"
+            backup_path = config_dir / "config.toml.bak"
+            original = b'summary = "codex"\n'
+            original_backup = b'summary = "command"\n'
+            path.write_bytes(original)
+            backup_path.write_bytes(original_backup)
+            real_writer = wizard._write_config_unlocked
+
+            def interrupt_after_write(*args, **kwargs):
+                real_writer(*args, **kwargs)
+                raise KeyboardInterrupt
+
+            def setup_and_interrupt(_config_dir, _state_dir, write_state):
+                config = load_config(config_dir)
+                config["summary"] = "template"
+                with mock.patch.object(
+                    wizard,
+                    "_write_config_unlocked",
+                    side_effect=interrupt_after_write,
+                ):
+                    wizard._write_setup_config(
+                        path, config, ["summary"], write_state
+                    )
+                return 0
+
+            output = io.StringIO()
+            with mock.patch.object(
+                wizard, "_setup_wizard", side_effect=setup_and_interrupt
+            ), contextlib.redirect_stdout(output):
+                result = wizard.run_setup(config_dir, root / "state")
+
+            contents = path.read_bytes()
+            backup_contents = backup_path.read_bytes()
+
+        self.assertEqual(result, 130)
+        self.assertEqual(contents, original)
+        self.assertEqual(backup_contents, original_backup)
+        self.assertIn("nothing written", output.getvalue())
+
     def test_abort_before_write_does_not_replace_unchanged_config(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

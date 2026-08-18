@@ -682,9 +682,25 @@ def _write_setup_config(
             for key in explicitly_chosen
             if key in DEFAULTS and key in config
         ]
-        _write_config_unlocked(path, config, chosen)
-        write_state["written"] = True
-        _capture_setup_write_state(write_state, path, "after")
+        try:
+            _write_config_unlocked(path, config, chosen)
+            write_state["written"] = True
+            _capture_setup_write_state(write_state, path, "after")
+        except KeyboardInterrupt:
+            backup_path = path.with_name("config.toml.bak")
+            _restore_file(
+                path,
+                write_state.get("config_before_write"),
+                write_state.get("config_before_mode"),
+            )
+            _restore_file(
+                backup_path,
+                write_state.get("backup_before_write"),
+                write_state.get("backup_before_mode"),
+            )
+            write_state["written"] = False
+            write_state["rolled_back"] = True
+            raise
 
 
 def _setup_write_is_current(
@@ -710,8 +726,9 @@ def run_setup(config_dir: Path, state_dir: Path) -> int:
     try:
         return _setup_wizard(config_dir, state_dir, write_state)
     except KeyboardInterrupt:
-        restored = not write_state.get("write_started") and not write_state.get(
-            "written"
+        restored = bool(write_state.get("rolled_back")) or (
+            not write_state.get("write_started")
+            and not write_state.get("written")
         )
         if write_state.get("written"):
             with config_lock(config_path):
