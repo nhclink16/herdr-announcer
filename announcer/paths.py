@@ -17,7 +17,7 @@ def local_plugin_dirs() -> Tuple[Path, Path]:
     return config_dir, state_dir
 
 
-def _resolve_dirs_without_env() -> Tuple[Path, Path]:
+def resolve_dirs_without_env() -> Tuple[Path, Path]:
     """Locate plugin dirs for commands launched outside Herdr."""
     fallback_config, state_dir = local_plugin_dirs()
     config_dir = ""
@@ -47,11 +47,16 @@ def resolve_dirs() -> Tuple[Path, Path]:
     state_value = os.environ.get("HERDR_PLUGIN_STATE_DIR") or ""
     if config_value and state_value:
         return Path(config_value), Path(state_value)
-    fallback_config, fallback_state = _resolve_dirs_without_env()
+    fallback_config, fallback_state = resolve_dirs_without_env()
     return (
         Path(config_value) if config_value else fallback_config,
         Path(state_value) if state_value else fallback_state,
     )
+
+
+# Compatibility alias retained for announce.py and callers from before the
+# directory resolver gained a public name.
+_resolve_dirs_without_env = resolve_dirs_without_env
 
 
 __all__ = [
@@ -59,4 +64,5 @@ __all__ = [
     "_resolve_dirs_without_env",
     "local_plugin_dirs",
     "resolve_dirs",
+    "resolve_dirs_without_env",
 ]

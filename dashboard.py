@@ -38,8 +38,8 @@ from announcer.log import (
 )
 from announcer.paths import (
     PLUGIN_ID,
-    _resolve_dirs_without_env,
     local_plugin_dirs,
+    resolve_dirs_without_env,
 )
 from announcer.snooze import (
     SNOOZE_HOUR,
@@ -61,6 +61,10 @@ from announcer.snooze import (
 
 
 PYTHON = sys.executable or "python3"
+
+# Compatibility name retained for callers that reached this helper through
+# dashboard.py before directory resolution moved into the package.
+_resolve_dirs_without_env = resolve_dirs_without_env
 
 WIDTH = 86                  # widest content line, inside the plugin popup
 FRAME_HEIGHT = 28           # tallest frame; render() clamps to the terminal

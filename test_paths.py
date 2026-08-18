@@ -18,12 +18,15 @@ class ResolveDirsTests(unittest.TestCase):
             "HERDR_PLUGIN_STATE_DIR": str(self.state_dir),
         }
         with mock.patch.dict(os.environ, environment, clear=False), mock.patch.object(
-            paths, "_resolve_dirs_without_env"
+            paths, "resolve_dirs_without_env"
         ) as fallback:
             result = paths.resolve_dirs()
 
         self.assertEqual(result, (self.config_dir, self.state_dir))
         fallback.assert_not_called()
+
+    def test_private_resolver_name_aliases_public_api(self):
+        self.assertIs(paths._resolve_dirs_without_env, paths.resolve_dirs_without_env)
 
     def test_missing_state_dir_never_falls_back_to_cwd(self):
         environment = {
@@ -31,7 +34,7 @@ class ResolveDirsTests(unittest.TestCase):
             "HERDR_PLUGIN_STATE_DIR": "",
         }
         with mock.patch.dict(os.environ, environment, clear=False), mock.patch.object(
-            paths, "_resolve_dirs_without_env", return_value=self.fallback
+            paths, "resolve_dirs_without_env", return_value=self.fallback
         ):
             result = paths.resolve_dirs()
 
@@ -44,7 +47,7 @@ class ResolveDirsTests(unittest.TestCase):
             "HERDR_PLUGIN_STATE_DIR": str(self.state_dir),
         }
         with mock.patch.dict(os.environ, environment, clear=False), mock.patch.object(
-            paths, "_resolve_dirs_without_env", return_value=self.fallback
+            paths, "resolve_dirs_without_env", return_value=self.fallback
         ):
             result = paths.resolve_dirs()
 
@@ -56,7 +59,7 @@ class ResolveDirsTests(unittest.TestCase):
             "HERDR_PLUGIN_STATE_DIR": "",
         }
         with mock.patch.dict(os.environ, environment, clear=False), mock.patch.object(
-            paths, "_resolve_dirs_without_env", return_value=self.fallback
+            paths, "resolve_dirs_without_env", return_value=self.fallback
         ):
             result = paths.resolve_dirs()
 
