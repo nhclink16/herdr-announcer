@@ -23,10 +23,6 @@ class PlaybackLockTimeout(TimeoutError):
     pass
 
 
-class SpeechCommandError(RuntimeError):
-    """A custom speech command failed without exposing its configured argv."""
-
-
 def load_debounce_state(path: Path) -> Dict[str, Any]:
     try:
         with path.open("r", encoding="utf-8") as handle:
@@ -209,29 +205,15 @@ def run_custom_speech(command_value: Any, text: str) -> str:
         raise ValueError("speak_command must not be empty")
     used_placeholder = any("{text}" in argument for argument in command_value)
     command = [argument.replace("{text}", text) for argument in command_value]
-    try:
-        completed = subprocess.run(
-            command,
-            check=False,
-            input=None if used_placeholder else text,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=60,
-        )
-    except subprocess.TimeoutExpired:
-        raise SpeechCommandError("speak-command: timeout") from None
-    except subprocess.CalledProcessError as error:
-        raise SpeechCommandError(
-            "speak-command: exit-{}".format(error.returncode)
-        ) from None
-    except OSError as error:
-        suffix = "-{}".format(error.errno) if error.errno is not None else ""
-        raise SpeechCommandError("speak-command: os-error{}".format(suffix)) from None
-    if completed.returncode:
-        raise SpeechCommandError(
-            "speak-command: exit-{}".format(completed.returncode)
-        )
+    subprocess.run(
+        command,
+        check=True,
+        input=None if used_placeholder else text,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=60,
+    )
     return "command"
 
 
@@ -476,7 +458,6 @@ _capabilities = capabilities
 __all__ = [
     "DEBOUNCE_MAX_AGE_SECONDS",
     "PlaybackLockTimeout",
-    "SpeechCommandError",
     "_capabilities",
     "_prune_debounce_state",
     "capabilities",

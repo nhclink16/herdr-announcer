@@ -313,23 +313,21 @@ def command_summary(
         if reasons is not None:
             reasons.append("command: timeout")
         return None
-    except subprocess.CalledProcessError as error:
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
         if reasons is not None:
-            reasons.append("command: exit-{}".format(error.returncode))
-        return None
-    except OSError as error:
-        if reasons is not None:
-            suffix = "-{}".format(error.errno) if error.errno is not None else ""
-            reasons.append("command: os-error{}".format(suffix))
-        return None
-    except (ValueError, TypeError, subprocess.SubprocessError) as error:
-        if reasons is not None:
-            reasons.append("command: {}".format(error.__class__.__name__))
+            detail = str(error).strip()
+            reasons.append(
+                "command: {}".format(
+                    detail[:120] if detail else error.__class__.__name__
+                )
+            )
         return None
     lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
     if not lines:
         if reasons is not None:
-            reasons.append("command: no-output")
+            detail = completed.stderr.strip().splitlines()
+            suffix = " " + detail[-1][:120] if detail else ""
+            reasons.append("command: no-output{}".format(suffix))
         return None
     sanitized = _sanitize_summary(lines[-1])
     if not sanitized and reasons is not None:

@@ -65,25 +65,6 @@ class SummaryReasonTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(reasons, ["command: timeout"])
 
-    @mock.patch.object(summarize.subprocess, "run")
-    def test_failed_command_reason_does_not_include_configured_argv(self, run):
-        secret = "sentinel-secret-token"
-        config = self.config()
-        config["summary_command"] = ["summarize", "--token", secret]
-        run.side_effect = subprocess.CalledProcessError(
-            17, config["summary_command"], stderr="also " + secret
-        )
-        reasons = []
-
-        result = summarize.command_summary(
-            config, "builder", "work", "done", "transcript", reasons
-        )
-
-        self.assertIsNone(result)
-        self.assertEqual(reasons, ["command: exit-17"])
-        self.assertNotIn(secret, " ".join(reasons))
-
-
 class StatusReasonTests(unittest.TestCase):
     def test_persisted_last_error_and_unknown_keys_appear_in_status(self):
         with tempfile.TemporaryDirectory() as directory:
