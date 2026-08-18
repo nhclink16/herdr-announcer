@@ -123,6 +123,19 @@ def process_invocation(
     if status not in announce_statuses:
         return "skipped-status"
 
+    # Snooze is checked AFTER the status filter and BEFORE debounce: an event
+    # nobody subscribed to keeps logging the truthful skipped-status, so
+    # action=snoozed marks exactly the announcements the snooze silenced.
+    try:
+        with (state_dir / "snooze.json").open("r", encoding="utf-8") as handle:
+            snooze_until = float(json.load(handle).get("until") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        snooze_until = 0.0
+    # The upper bound rejects a corrupt Infinity deadline (json parses it),
+    # which would otherwise mute every announcement forever.
+    if time.time() < snooze_until < float("inf"):
+        return "snoozed"
+
     debounce_value = config.get("debounce_seconds")
     if isinstance(debounce_value, bool) or not isinstance(debounce_value, int):
         raise ValueError("debounce_seconds must be an integer")
