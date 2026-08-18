@@ -93,6 +93,50 @@ class ConfigWriterTests(unittest.TestCase):
         self.assertIn('voice = "Alex"', contents)
         self.assertNotIn('"idle"', contents)
 
+    def test_multiline_string_ending_in_quote_does_not_consume_next_key(self):
+        for multiline in ('"""abc""""', "'''abc''''"):
+            with self.subTest(multiline=multiline), tempfile.TemporaryDirectory() as directory:
+                config_dir = Path(directory)
+                path = config_dir / "config.toml"
+                path.write_text(
+                    "custom_prompt = {}\ntoast = false\n".format(multiline),
+                    encoding="utf-8",
+                )
+                config = load_config(config_dir)
+                config["toast"] = True
+
+                with contextlib.redirect_stdout(io.StringIO()):
+                    wizard.write_config(path, config, ["toast"])
+
+                contents = path.read_text(encoding="utf-8")
+                loaded = load_config(config_dir)
+
+            self.assertEqual(contents.count("toast"), 1)
+            self.assertTrue(loaded["toast"])
+            if wizard.tomllib is not None:
+                self.assertEqual(
+                    loaded["custom_prompt"],
+                    'abc"' if multiline[0] == '"' else "abc'",
+                )
+
+    def test_unicode_escaped_known_key_is_replaced_without_duplicate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            path = config_dir / "config.toml"
+            path.write_text('"\\U00000074oast" = false\n', encoding="utf-8")
+            config = load_config(config_dir)
+            config["toast"] = True
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                wizard.write_config(path, config, ["toast"])
+
+            contents = path.read_text(encoding="utf-8")
+            loaded = load_config(config_dir)
+
+        self.assertEqual(contents.count("toast"), 1)
+        self.assertNotIn("\\U00000074", contents)
+        self.assertTrue(loaded["toast"])
+
     def test_unknown_float_and_table_survive_known_update(self):
         original_unknown = (
             "future_timeout = 1.5\n"

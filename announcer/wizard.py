@@ -92,10 +92,46 @@ def _known_key(raw_key: str) -> Optional[str]:
         return key
     if len(key) < 2 or key[0] != key[-1] or key[0] not in ('"', "'"):
         return None
-    try:
-        decoded = json.loads(key) if key[0] == '"' else key[1:-1]
-    except (TypeError, ValueError):
-        return None
+    if key[0] == "'":
+        decoded = key[1:-1]
+    else:
+        decoded_parts: List[str] = []
+        content = key[1:-1]
+        index = 0
+        escapes = {
+            '"': '"',
+            "\\": "\\",
+            "b": "\b",
+            "t": "\t",
+            "n": "\n",
+            "f": "\f",
+            "r": "\r",
+        }
+        while index < len(content):
+            if content[index] != "\\":
+                decoded_parts.append(content[index])
+                index += 1
+                continue
+            index += 1
+            if index >= len(content):
+                return None
+            escape = content[index]
+            if escape in escapes:
+                decoded_parts.append(escapes[escape])
+                index += 1
+                continue
+            if escape not in ("u", "U"):
+                return None
+            digits = 4 if escape == "u" else 8
+            encoded = content[index + 1:index + 1 + digits]
+            if len(encoded) != digits:
+                return None
+            try:
+                decoded_parts.append(chr(int(encoded, 16)))
+            except (ValueError, OverflowError):
+                return None
+            index += digits + 1
+        decoded = "".join(decoded_parts)
     return decoded if decoded in DEFAULTS else None
 
 
@@ -118,7 +154,6 @@ def _toml_value_end(text: str, start: int) -> int:
             index += 1
             continue
         if quote:
-            delimiter = quote * (3 if triple else 1)
             if escaped:
                 escaped = False
                 index += 1
@@ -127,10 +162,18 @@ def _toml_value_end(text: str, start: int) -> int:
                 escaped = True
                 index += 1
                 continue
-            if text.startswith(delimiter, index):
+            if triple and char == quote:
+                run_end = index
+                while run_end < len(text) and text[run_end] == quote:
+                    run_end += 1
+                if run_end - index >= 3:
+                    quote = ""
+                    triple = False
+                index = run_end
+                continue
+            if not triple and char == quote:
                 quote = ""
-                triple = False
-                index += len(delimiter)
+                index += 1
                 continue
             index += 1
             continue
