@@ -306,6 +306,7 @@ class WizardFlowTests(unittest.TestCase):
                 config["summary"] = "template"
                 wizard.write_config(path, config, ["summary"])
                 write_state["written"] = True
+                wizard._capture_setup_write_state(write_state, path, "after")
                 raise KeyboardInterrupt
 
             output = io.StringIO()
@@ -337,6 +338,39 @@ class WizardFlowTests(unittest.TestCase):
         self.assertEqual(restore_temps, [])
         self.assertTrue(reacquired.is_set())
         self.assertIn("nothing written", output.getvalue())
+
+    def test_abort_does_not_overwrite_a_newer_external_config_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_dir = root / "config"
+            config_dir.mkdir()
+            path = config_dir / "config.toml"
+            path.write_text('summary = "codex"\n', encoding="utf-8")
+
+            def write_then_external_update(_config_dir, _state_dir, write_state):
+                wizard_config = load_config(config_dir)
+                wizard_config["summary"] = "template"
+                wizard.write_config(path, wizard_config, ["summary"])
+                write_state["written"] = True
+                wizard._capture_setup_write_state(write_state, path, "after")
+
+                external_config = load_config(config_dir)
+                external_config["voice"] = "Alex"
+                wizard.write_config(path, external_config, ["voice"])
+                raise KeyboardInterrupt
+
+            output = io.StringIO()
+            with mock.patch.object(
+                wizard, "_setup_wizard", side_effect=write_then_external_update
+            ), contextlib.redirect_stdout(output):
+                result = wizard.run_setup(config_dir, root / "state")
+
+            loaded = load_config(config_dir)
+
+        self.assertEqual(result, 130)
+        self.assertEqual(loaded["summary"], "template")
+        self.assertEqual(loaded["voice"], "Alex")
+        self.assertIn("changed concurrently", output.getvalue())
 
     def test_abort_before_write_does_not_replace_unchanged_config(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -389,7 +389,7 @@ def _preview_line(line: str) -> str:
 def _setup_wizard(
     config_dir: Path,
     state_dir: Path,
-    write_state: Optional[MutableMapping[str, bool]] = None,
+    write_state: Optional[MutableMapping[str, Any]] = None,
 ) -> int:
     config_path = config_dir / "config.toml"
     existed = config_path.exists()
@@ -628,9 +628,10 @@ def _setup_wizard(
     if not write_now:
         print("Nothing written.")
         return 0
-    write_config(config_path, config, chosen)
-    if write_state is not None:
-        write_state["written"] = True
+    if write_state is None:
+        write_config(config_path, config, chosen)
+    else:
+        _write_setup_config(config_path, config, chosen, write_state)
 
     test_voice, _unused = ask_confirm("Test the voice now?", True)
     if test_voice:
@@ -647,25 +648,89 @@ def _setup_wizard(
     return 0
 
 
+def _optional_file_state(path: Path) -> Tuple[Optional[bytes], Optional[int]]:
+    try:
+        return path.read_bytes(), path.stat().st_mode & 0o7777
+    except FileNotFoundError:
+        return None, None
+
+
+def _capture_setup_write_state(
+    write_state: MutableMapping[str, Any], config_path: Path, phase: str
+) -> None:
+    backup_path = config_path.with_name("config.toml.bak")
+    config_bytes, config_mode = _optional_file_state(config_path)
+    backup_bytes, backup_mode = _optional_file_state(backup_path)
+    write_state["config_{}_write".format(phase)] = config_bytes
+    write_state["config_{}_mode".format(phase)] = config_mode
+    write_state["backup_{}_write".format(phase)] = backup_bytes
+    write_state["backup_{}_mode".format(phase)] = backup_mode
+
+
+def _write_setup_config(
+    path: Path,
+    config: Dict[str, Any],
+    explicitly_chosen: Sequence[str],
+    write_state: MutableMapping[str, Any],
+) -> None:
+    """Write wizard choices while recording an exact rollback boundary."""
+    with config_lock(path):
+        _capture_setup_write_state(write_state, path, "before")
+        write_state["write_started"] = True
+        chosen = [
+            key
+            for key in explicitly_chosen
+            if key in DEFAULTS and key in config
+        ]
+        _write_config_unlocked(path, config, chosen)
+        write_state["written"] = True
+        _capture_setup_write_state(write_state, path, "after")
+
+
+def _setup_write_is_current(
+    write_state: MutableMapping[str, Any], config_path: Path
+) -> bool:
+    backup_path = config_path.with_name("config.toml.bak")
+    config_state = _optional_file_state(config_path)
+    backup_state = _optional_file_state(backup_path)
+    return config_state == (
+        write_state.get("config_after_write"),
+        write_state.get("config_after_mode"),
+    ) and backup_state == (
+        write_state.get("backup_after_write"),
+        write_state.get("backup_after_mode"),
+    )
+
+
 def run_setup(config_dir: Path, state_dir: Path) -> int:
     config_path = config_dir / "config.toml"
     backup_path = config_path.with_name("config.toml.bak")
-    original = config_path.read_bytes() if config_path.exists() else None
-    old_backup = backup_path.read_bytes() if backup_path.exists() else None
-    original_mode = (
-        config_path.stat().st_mode & 0o7777 if original is not None else None
-    )
-    backup_mode = (
-        backup_path.stat().st_mode & 0o7777 if old_backup is not None else None
-    )
-    write_state = {"written": False}
+    write_state: MutableMapping[str, Any] = {"written": False}
+    _capture_setup_write_state(write_state, config_path, "before")
     try:
         return _setup_wizard(config_dir, state_dir, write_state)
     except KeyboardInterrupt:
-        with config_lock(config_path):
-            _restore_file(config_path, original, original_mode)
-            _restore_file(backup_path, old_backup, backup_mode)
-        print("\nsetup aborted, nothing written")
+        restored = not write_state.get("write_started") and not write_state.get(
+            "written"
+        )
+        if write_state.get("written"):
+            with config_lock(config_path):
+                if _setup_write_is_current(write_state, config_path):
+                    _restore_file(
+                        config_path,
+                        write_state.get("config_before_write"),
+                        write_state.get("config_before_mode"),
+                    )
+                    _restore_file(
+                        backup_path,
+                        write_state.get("backup_before_write"),
+                        write_state.get("backup_before_mode"),
+                    )
+                    restored = True
+        if restored:
+            print("\nsetup aborted, nothing written")
+        else:
+            print("\nsetup aborted; config changed concurrently and was kept")
         return 130
 
 
