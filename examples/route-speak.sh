@@ -38,19 +38,82 @@ desktop|10.0.0.5|windows
 laptop|10.0.0.6|macos
 "
 
-# Spoken on the Herdr host when nobody is attached remotely.
-LOCAL_SPEAK="/usr/bin/say"      # macOS. Linux: espeak-ng, spd-say
-SSH_OPTS="-o ConnectTimeout=5 -o BatchMode=yes"
+LOCAL_SPEAK=""
+LOCAL_SPEAK_MODE=""
+if command -v say >/dev/null 2>&1; then
+  LOCAL_SPEAK=$(command -v say)
+  LOCAL_SPEAK_MODE=say
+elif command -v espeak-ng >/dev/null 2>&1; then
+  LOCAL_SPEAK=$(command -v espeak-ng)
+  LOCAL_SPEAK_MODE=espeak-ng
+elif command -v spd-say >/dev/null 2>&1; then
+  LOCAL_SPEAK=$(command -v spd-say)
+  LOCAL_SPEAK_MODE=spd-say
+elif command -v espeak >/dev/null 2>&1; then
+  LOCAL_SPEAK=$(command -v espeak)
+  LOCAL_SPEAK_MODE=espeak
+else
+  printf '%s\n' 'route-speak: no local say, espeak-ng, spd-say, or espeak found' >&2
+fi
+
 SSH_PORT=22
 
-text="$(cat)"
+if nc -h 2>&1 | grep -q -- '-G'; then
+  NC_FLAVOR=macos
+else
+  NC_FLAVOR=portable
+fi
+
+text=$(cat)
 [ -n "$text" ] || exit 0
+
+local_speak() {
+  [ -n "$LOCAL_SPEAK" ] || return 1
+  if [ "$LOCAL_SPEAK_MODE" = spd-say ]; then
+    printf '%s\n' "$text" | "$LOCAL_SPEAK" -e -w
+  else
+    printf '%s\n' "$text" | "$LOCAL_SPEAK"
+  fi
+}
+
+ssh_with_opts() {
+  ssh -o ConnectTimeout=5 -o BatchMode=yes "$@"
+}
 
 # True when $1 has an ESTABLISHED connection into our SSH port.
 inbound_from() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -tan 2>/dev/null | awk -v ip="$1" -v port="$SSH_PORT" '
+      $1 == "ESTAB" {
+        local_endpoint = $4
+        peer_endpoint = $5
+        sub(/^.*:/, "", local_endpoint)
+        sub(/:[^:]*$/, "", peer_endpoint)
+        gsub(/^\[/, "", peer_endpoint)
+        gsub(/\]$/, "", peer_endpoint)
+        if (local_endpoint == port && peer_endpoint == ip) hit = 1
+      }
+      END { exit !hit }
+    '
+    return
+  fi
+
   netstat -an 2>/dev/null | awk -v ip="$1" -v port="$SSH_PORT" '
-    $1 ~ /^tcp/ && $6 == "ESTABLISHED" \
-      && $4 ~ ("\\." port "$") && index($5, ip ".") == 1 { hit = 1 }
+    $1 ~ /^tcp/ && $6 == "ESTABLISHED" {
+      local_endpoint = $4
+      peer_endpoint = $5
+      if (local_endpoint ~ /\.[0-9]+$/) {
+        sub(/^.*\./, "", local_endpoint)
+      } else {
+        sub(/^.*:/, "", local_endpoint)
+      }
+      if (peer_endpoint ~ /\.[0-9]+$/) {
+        sub(/\.[0-9]+$/, "", peer_endpoint)
+      } else {
+        sub(/:[^:]*$/, "", peer_endpoint)
+      }
+      if (local_endpoint == port && peer_endpoint == ip) hit = 1
+    }
     END { exit !hit }
   '
 }
@@ -58,11 +121,17 @@ inbound_from() {
 # A sleeping peer leaves its ESTABLISHED entry behind, so "detected" is not
 # "reachable". Probe the SSH port with a short timeout before believing it.
 reachable() {
-  nc -z -G 2 "$1" "$SSH_PORT" >/dev/null 2>&1
+  if [ "$NC_FLAVOR" = macos ]; then
+    nc -z -G 2 "$1" "$SSH_PORT" >/dev/null 2>&1
+  else
+    nc -z -w 2 "$1" "$SSH_PORT" >/dev/null 2>&1
+  fi
 }
 
 present() {
-  { who 2>/dev/null | grep -q "$1" || inbound_from "$1"; } && reachable "$1"
+  ip_escaped=$(printf '%s' "$1" | sed 's/\./\\./g')
+  { who 2>/dev/null | grep -qE "[( ]${ip_escaped}[) ]" || inbound_from "$1"; } &&
+    reachable "$1"
 }
 
 speak_on() {
@@ -71,20 +140,21 @@ speak_on() {
   case "$_backend" in
     macos)
       # say reads stdin, which sidesteps shell quoting entirely.
-      printf '%s\n' "$text" | ssh $SSH_OPTS "$_alias" '/usr/bin/say'
+      printf '%s\n' "$text" | ssh_with_opts "$_alias" '/usr/bin/say'
       ;;
     linux)
-      printf '%s\n' "$text" | ssh $SSH_OPTS "$_alias" 'espeak-ng 2>/dev/null || spd-say -w'
+      printf '%s\n' "$text" | ssh_with_opts "$_alias" \
+        'if command -v espeak-ng >/dev/null 2>&1; then espeak-ng; elif command -v spd-say >/dev/null 2>&1; then spd-say -e -w; else espeak; fi'
       ;;
     windows)
       # PowerShell escapes a single quote by doubling it. Skip this and any
       # apostrophe — "it's", "the agent's" — breaks the command. Summaries are
       # generated prose, so apostrophes are a matter of time, not chance.
       _escaped=$(printf '%s' "$text" | sed "s/'/''/g")
-      ssh $SSH_OPTS "$_alias" "powershell -NoProfile -Command \"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('$_escaped')\""
+      ssh_with_opts "$_alias" "powershell -NoProfile -Command \"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('$_escaped')\""
       ;;
     cmd:*)
-      printf '%s\n' "$text" | ssh $SSH_OPTS "$_alias" "${_backend#cmd:}"
+      printf '%s\n' "$text" | ssh_with_opts "$_alias" "${_backend#cmd:}"
       ;;
     *)
       printf 'route-speak: unknown backend "%s" for %s\n' "$_backend" "$_alias" >&2
@@ -105,7 +175,8 @@ attached=$(
 )
 
 if [ -z "$attached" ]; then
-  exec $LOCAL_SPEAK "$text"
+  local_speak
+  exit $?
 fi
 
 # Speak everywhere at once rather than one device after another. Collect exit
@@ -131,4 +202,4 @@ for _p in $_pids; do
 done
 
 # Nobody accepted it — say it here rather than lose it.
-[ "$_spoke" = 1 ] || exec $LOCAL_SPEAK "$text"
+[ "$_spoke" = 1 ] || local_speak
