@@ -3,8 +3,8 @@
 Config lives at `<config-dir>/config.toml` where
 `herdr plugin config-dir nhclink16.announcer` prints the directory. The
 [setup wizard](../README.md#quick-start) writes it for you; every key is
-optional, and the file is safe to hand-edit (though wizard re-runs don't
-preserve comments).
+optional, and the file is safe to hand-edit. Wizard re-runs preserve comments,
+unknown keys, and tables while updating the settings you explicitly choose.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -26,10 +26,32 @@ preserve comments).
 | `elevenlabs_model` | `"eleven_turbo_v2_5"` | ElevenLabs TTS model |
 | `voice` | *(system default)* | macOS `say` voice name |
 | `toast` | `false` | Also send each announcement as a Herdr toast |
+| `mute_agents` | `[]` | Case-insensitive agent types to silence, such as `["codex"]` |
+| `announce_on_detect` | `false` | Announce a newly detected agent once; release events never announce |
 
 See [config.example.toml](../config.example.toml) for a fully annotated
 example, including a Claude-over-ACP summarizer using the bundled
 [examples/acp-summary.py](../examples/acp-summary.py).
+
+## Global and pane-specific silence
+
+Dashboard snooze actions (`5m`, `30m`, `2h`, `tomorrow`, and `off`) suppress
+all automatic announcements. Pane-context actions are narrower:
+
+- **Mute announcer for this pane** toggles an until-close mute. Herdr receives
+  a `muted` metadata token, and the entry is removed automatically when the
+  pane closes or exits.
+- **Snooze announcer for this pane** cycles 5 minutes → 30 minutes → 2 hours →
+  off. An expired timed entry is removed when mute state is next read.
+- **Announce this pane now** reads and announces the focused pane immediately.
+  It intentionally bypasses state filtering, agent and pane mutes, global
+  snooze, and debounce, while still using the normal summary, speech, and
+  playback-lock pipeline.
+
+`mute_agents` applies before pane mutes and global snooze. It first compares
+the event's machine agent type, then its display agent, without regard to case.
+`announce_on_detect` uses the same mute, snooze, and debounce gates; a Herdr
+agent-release event is always ignored.
 
 ## Voices
 

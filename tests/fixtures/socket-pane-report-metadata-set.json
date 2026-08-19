@@ -1,0 +1,29 @@
+{
+  "request": {
+    "id": "nhclink16.contract-probe:pane.report_metadata",
+    "method": "pane.report_metadata",
+    "params": {
+      "pane_id": "w7:p1",
+      "source": "nhclink16.contract-probe",
+      "state_labels": {
+        "unknown": "muted"
+      },
+      "tokens": {
+        "muted": "1"
+      }
+    }
+  },
+  "request_line": "{\"id\":\"nhclink16.contract-probe:pane.report_metadata\",\"method\":\"pane.report_metadata\",\"params\":{\"pane_id\":\"w7:p1\",\"source\":\"nhclink16.contract-probe\",\"tokens\":{\"muted\":\"1\"},\"state_labels\":{\"unknown\":\"muted\"}}}\\n",
+  "response": {
+    "id": "nhclink16.contract-probe:pane.report_metadata",
+    "result": {
+      "type": "ok"
+    }
+  },
+  "response_line": "{\"id\":\"nhclink16.contract-probe:pane.report_metadata\",\"result\":{\"type\":\"ok\"}}\\n",
+  "transport": {
+    "connection_policy": "one request per connection",
+    "framing": "newline-delimited JSON",
+    "socket_path": "/home/nicholas/.config/herdr/herdr.sock"
+  }
+}

@@ -1,0 +1,27 @@
+[package]
+name = "herdr-announcer"
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+description = "Speaks a short summary when an agent finishes or needs input"
+
+[lib]
+name = "herdr_announcer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "herdr-announcer"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml_edit = "0.23"
+jiff = "0.2"
+regex = "1"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+rustix = { version = "1", features = ["fs"] }
+tempfile = "3"
+shell-words = "1"

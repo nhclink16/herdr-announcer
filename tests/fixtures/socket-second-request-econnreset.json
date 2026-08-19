@@ -1,0 +1,236 @@
+{
+  "attempts": [
+    {
+      "first_request": {
+        "id": "econnreset-1-first",
+        "method": "workspace.list",
+        "params": {}
+      },
+      "first_response": {
+        "id": "econnreset-1-first",
+        "result": {
+          "type": "workspace_list",
+          "workspaces": [
+            {
+              "active_tab_id": "w2:t2",
+              "agent_status": "idle",
+              "focused": false,
+              "label": "arch",
+              "number": 1,
+              "pane_count": 4,
+              "tab_count": 2,
+              "workspace_id": "w2"
+            },
+            {
+              "active_tab_id": "w3:t1",
+              "agent_status": "idle",
+              "focused": false,
+              "label": "herdr-plugins",
+              "number": 2,
+              "pane_count": 2,
+              "tab_count": 1,
+              "workspace_id": "w3"
+            },
+            {
+              "active_tab_id": "w5:t1",
+              "agent_status": "working",
+              "focused": true,
+              "label": "announcer",
+              "number": 3,
+              "pane_count": 3,
+              "tab_count": 1,
+              "workspace_id": "w5"
+            },
+            {
+              "active_tab_id": "w6:t1",
+              "agent_status": "idle",
+              "focused": false,
+              "label": "nicholas",
+              "number": 4,
+              "pane_count": 2,
+              "tab_count": 1,
+              "workspace_id": "w6"
+            },
+            {
+              "active_tab_id": "w7:t1",
+              "agent_status": "unknown",
+              "focused": false,
+              "label": "contract-probe-phase0",
+              "number": 5,
+              "pane_count": 1,
+              "tab_count": 1,
+              "workspace_id": "w7"
+            }
+          ]
+        }
+      },
+      "second_receive": {
+        "errno": 104,
+        "exception": "ConnectionResetError",
+        "kind": "os_error",
+        "message": "[Errno 104] Connection reset by peer"
+      },
+      "second_request": {
+        "id": "econnreset-1-second",
+        "method": "workspace.list",
+        "params": {}
+      }
+    },
+    {
+      "first_request": {
+        "id": "econnreset-2-first",
+        "method": "workspace.list",
+        "params": {}
+      },
+      "first_response": {
+        "id": "econnreset-2-first",
+        "result": {
+          "type": "workspace_list",
+          "workspaces": [
+            {
+              "active_tab_id": "w2:t2",
+              "agent_status": "idle",
+              "focused": false,
+              "label": "arch",
+              "number": 1,
+              "pane_count": 4,
+              "tab_count": 2,
+              "workspace_id": "w2"
+            },
+            {
+              "active_tab_id": "w3:t1",
+              "agent_status": "idle",
+              "focused": false,
+              "label": "herdr-plugins",
+              "number": 2,
+              "pane_count": 2,
+              "tab_count": 1,
+              "workspace_id": "w3"
+            },
+            {
+              "active_tab_id": "w5:t1",
+              "agent_status": "working",
+              "focused": true,
+              "label": "announcer",
+              "number": 3,
+              "pane_count": 3,
+              "tab_count": 1,
+              "workspace_id": "w5"
+            },
+            {
+              "active_tab_id": "w6:t1",
+              "agent_status": "idle",
+              "focused": false,
+              "label": "nicholas",
+              "number": 4,
+              "pane_count": 2,
+              "tab_count": 1,
+              "workspace_id": "w6"
+            },
+            {
+              "active_tab_id": "w7:t1",
+              "agent_status": "unknown",
+              "focused": false,
+              "label": "contract-probe-phase0",
+              "number": 5,
+              "pane_count": 1,
+              "tab_count": 1,
+              "workspace_id": "w7"
+            }
+          ]
+        }
+      },
+      "second_receive": {
+        "errno": 32,
+        "exception": "BrokenPipeError",
+        "kind": "os_error",
+        "message": "[Errno 32] Broken pipe"
+      },
+      "second_request": {
+        "id": "econnreset-2-second",
+        "method": "workspace.list",
+        "params": {}
+      }
+    },
+    {
+      "first_request": {
+        "id": "econnreset-3-first",
+        "method": "workspace.list",
+        "params": {}
+      },
+      "first_response": {
+        "id": "econnreset-3-first",
+        "result": {
+          "type": "workspace_list",
+          "workspaces": [
+            {
+              "active_tab_id": "w2:t2",
+              "agent_status": "idle",
+              "focused": false,
+              "label": "arch",
+              "number": 1,
+              "pane_count": 4,
+              "tab_count": 2,
+              "workspace_id": "w2"
+            },
+            {
+              "active_tab_id": "w3:t1",
+              "agent_status": "idle",
+              "focused": false,
+              "label": "herdr-plugins",
+              "number": 2,
+              "pane_count": 2,
+              "tab_count": 1,
+              "workspace_id": "w3"
+            },
+            {
+              "active_tab_id": "w5:t1",
+              "agent_status": "working",
+              "focused": true,
+              "label": "announcer",
+              "number": 3,
+              "pane_count": 3,
+              "tab_count": 1,
+              "workspace_id": "w5"
+            },
+            {
+              "active_tab_id": "w6:t1",
+              "agent_status": "idle",
+              "focused": false,
+              "label": "nicholas",
+              "number": 4,
+              "pane_count": 2,
+              "tab_count": 1,
+              "workspace_id": "w6"
+            },
+            {
+              "active_tab_id": "w7:t1",
+              "agent_status": "unknown",
+              "focused": false,
+              "label": "contract-probe-phase0",
+              "number": 5,
+              "pane_count": 1,
+              "tab_count": 1,
+              "workspace_id": "w7"
+            }
+          ]
+        }
+      },
+      "second_receive": {
+        "errno": 104,
+        "exception": "ConnectionResetError",
+        "kind": "os_error",
+        "message": "[Errno 104] Connection reset by peer"
+      },
+      "second_request": {
+        "id": "econnreset-3-second",
+        "method": "workspace.list",
+        "params": {}
+      }
+    }
+  ],
+  "transport": {
+    "socket_path": "/home/nicholas/.config/herdr/herdr.sock",
+    "test": "send a second request on the same connection after reading the first response"
+  }
+}

@@ -1,78 +1,129 @@
 id = "nhclink16.announcer"
 name = "Announcer"
-version = "0.9.1"
-min_herdr_version = "0.7.0"
+version = "1.0.0"
+min_herdr_version = "0.8.0"
 description = "Speaks a short summary when an agent finishes or needs input - local TTS, ElevenLabs, or any custom command"
 platforms = ["macos", "linux"]
 
+[[build]]
+command = ["cargo", "build", "--release"]
+
 [[events]]
 on = "pane.agent_status_changed"
-command = ["python3", "announce.py"]
+command = ["./target/release/herdr-announcer"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["./target/release/herdr-announcer"]
+
+[[events]]
+on = "pane.closed"
+command = ["./target/release/herdr-announcer", "cleanup"]
+
+[[events]]
+on = "pane.exited"
+command = ["./target/release/herdr-announcer", "cleanup"]
+
+[[events]]
+on = "workspace.closed"
+command = ["./target/release/herdr-announcer", "cleanup"]
+
+[[actions]]
+id = "mute-pane"
+title = "Mute announcer for this pane"
+description = "Toggle announcements for this pane; the mute dies with the pane"
+contexts = ["pane"]
+command = ["./target/release/herdr-announcer", "action", "mute-pane"]
+
+[[actions]]
+id = "snooze-pane"
+title = "Snooze announcer for this pane"
+description = "Cycle this pane's snooze: 5m, 30m, 2h, off"
+contexts = ["pane"]
+command = ["./target/release/herdr-announcer", "action", "snooze-pane"]
+
+[[actions]]
+id = "announce-now"
+title = "Announce this pane now"
+description = "Summarize and speak this pane's current status immediately"
+contexts = ["pane"]
+command = ["./target/release/herdr-announcer", "action", "announce-now"]
 
 [[actions]]
 id = "test"
 title = "Test announcer voice"
+description = "Speak a sample announcement with the configured voice"
 contexts = ["workspace"]
-command = ["python3", "announce.py", "--test"]
+command = ["./target/release/herdr-announcer", "--test"]
 
 [[actions]]
 id = "status"
 title = "Announcer status"
+description = "Show configuration, detected tools, and recent log lines"
 contexts = ["workspace"]
-command = ["python3", "announce.py", "status"]
+command = ["./target/release/herdr-announcer", "status"]
 
 [[actions]]
 id = "open-dashboard"
 title = "Open announcer dashboard"
+description = "Live status and one-key controls in a popup"
 contexts = ["workspace"]
-command = ["python3", "dashboard.py", "open"]
+command = ["./target/release/herdr-announcer", "dashboard", "open"]
 
 [[actions]]
 id = "snooze-5m"
 title = "Snooze announcer for 5 minutes"
+description = "Silence all announcements for 5 minutes"
 contexts = ["workspace"]
-command = ["python3", "dashboard.py", "snooze", "5m"]
+command = ["./target/release/herdr-announcer", "dashboard", "snooze", "5m"]
 
 [[actions]]
 id = "snooze-30m"
 title = "Snooze announcer for 30 minutes"
+description = "Silence all announcements for 30 minutes"
 contexts = ["workspace"]
-command = ["python3", "dashboard.py", "snooze", "30m"]
+command = ["./target/release/herdr-announcer", "dashboard", "snooze", "30m"]
 
 [[actions]]
 id = "snooze-2h"
 title = "Snooze announcer for 2 hours"
+description = "Silence all announcements for 2 hours"
 contexts = ["workspace"]
-command = ["python3", "dashboard.py", "snooze", "2h"]
+command = ["./target/release/herdr-announcer", "dashboard", "snooze", "2h"]
 
 [[actions]]
 id = "snooze-tomorrow"
 title = "Snooze announcer until tomorrow morning"
+description = "Silence all announcements until 8:00 tomorrow"
 contexts = ["workspace"]
-command = ["python3", "dashboard.py", "snooze", "tomorrow"]
+command = ["./target/release/herdr-announcer", "dashboard", "snooze", "tomorrow"]
 
 [[actions]]
 id = "snooze-off"
 title = "Resume announcer now"
+description = "End any active snooze immediately"
 contexts = ["workspace"]
-command = ["python3", "dashboard.py", "snooze", "off"]
+command = ["./target/release/herdr-announcer", "dashboard", "snooze", "off"]
 
 [[actions]]
 id = "toggle-toast"
 title = "Toggle announcer toast notifications"
+description = "Mirror announcements as Herdr notifications on or off"
 contexts = ["workspace"]
-command = ["python3", "dashboard.py", "toggle-toast"]
+command = ["./target/release/herdr-announcer", "dashboard", "toggle-toast"]
 
 [[panes]]
 id = "setup"
 title = "Announcer setup"
+description = "Interactive setup wizard"
 placement = "split"
-command = ["python3", "announce.py", "setup"]
+command = ["./target/release/herdr-announcer", "setup"]
 
 [[panes]]
 id = "dashboard"
 title = "Announcer dashboard"
+description = "Live status and one-key controls"
 placement = "popup"
 width = 94
 height = 30
-command = ["python3", "dashboard.py"]
+command = ["./target/release/herdr-announcer", "dashboard"]

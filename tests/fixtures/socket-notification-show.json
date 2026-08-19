@@ -1,0 +1,27 @@
+{
+  "request": {
+    "id": "nhclink16.contract-probe:notification.show",
+    "method": "notification.show",
+    "params": {
+      "body": "Phase 0 title/body socket contract",
+      "position": "top-right",
+      "sound": "none",
+      "title": "contract-probe test"
+    }
+  },
+  "request_line": "{\"id\":\"nhclink16.contract-probe:notification.show\",\"method\":\"notification.show\",\"params\":{\"title\":\"contract-probe test\",\"body\":\"Phase 0 title/body socket contract\",\"sound\":\"none\",\"position\":\"top-right\"}}\\n",
+  "response": {
+    "id": "nhclink16.contract-probe:notification.show",
+    "result": {
+      "reason": "shown",
+      "shown": true,
+      "type": "notification_show"
+    }
+  },
+  "response_line": "{\"id\":\"nhclink16.contract-probe:notification.show\",\"result\":{\"type\":\"notification_show\",\"shown\":true,\"reason\":\"shown\"}}\\n",
+  "transport": {
+    "connection_policy": "one request per connection",
+    "framing": "newline-delimited JSON",
+    "socket_path": "/home/nicholas/.config/herdr/herdr.sock"
+  }
+}

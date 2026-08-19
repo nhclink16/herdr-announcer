@@ -1,54 +1,57 @@
 # Development
 
-## Layout
+The 1.0 implementation is one Rust crate at the repository root:
 
+```text
+Cargo.toml
+src/
+  main.rs          CLI dispatch
+  config.rs        defaults and validation
+  config_write.rs  locked, comment-preserving writes and rollback
+  event.rs         Herdr event/context decoding
+  ipc.rs           one-request-per-connection Herdr socket client
+  hook.rs          announcement pipeline
+  summarize.rs     template, command, and Codex summaries
+  speech.rs        custom, ElevenLabs, and local speech
+  actions.rs       pane-context actions
+  mute.rs          persistent per-pane mute state
+  snapshot.rs      stable non-TTY dashboard output
+  tui/             dashboard, wizard, widgets, and theme
+tests/              integration, fixture, render, and golden tests
+examples/           standalone ACP summarizer and speech router
 ```
-announce.py       entrypoint + orchestration; a thin facade over announcer/
-dashboard.py      compatibility entrypoint for plugin actions and imports
-announcer/
-  dashboard.py    live status TUI and dashboard command routing
-  config.py       defaults, TOML loading (tomllib, tiny-TOML fallback on 3.9)
-  config_io.py    compatibility-safe config editing for noninteractive UIs
-  herdr.py        Herdr CLI client, event parsing
-  log.py          invocation log writing and tail parsing
-  paths.py        config/state directory resolution outside Herdr
-  summarize.py    template / codex / command summarizers, sanitizer
-  speech.py       TTS backends, ElevenLabs, playback + debounce locks
-  snooze.py       snooze state, duration parsing, and labels
-  deadline.py     the shared two-phase timeout machine
-  tui.py          raw-terminal widget kit
-  wizard.py       setup wizard
-examples/         acp-summary.py (Claude over ACP), route-speak.sh
-```
 
-The two-phase deadline (a short first-activity window, then a fresh
-completion window) lives in `announcer/deadline.py` and is shared by the
-codex summarizer and `examples/acp-summary.py`.
 
-## Tests
+## Test loop
+
+Run the same gates as CI:
 
 ```bash
-python3 -m unittest discover   # silent — no audio, no network
-shellcheck examples/*.sh
+cargo fmt --check
+cargo build --release
+cargo test
+cargo clippy --release -- -D warnings
+scripts/check-version.sh
+shellcheck examples/*.sh scripts/*.sh
 ```
 
-CI runs both on macOS and Ubuntu across Python 3.9, 3.11, and 3.13 — 3.9
-matters because it's what macOS ships as `/usr/bin/python3`, and it
-exercises the tiny-TOML fallback that `tomllib` replaces on newer
-interpreters.
+Timing tests use generous margins intentionally. They assert ordering—most
+notably that the completion window starts at first model activity—not raw
+speed.
 
-Tests that involve timing use generous margins on purpose; the properties
-under test are about *ordering* (completion may outlive the first-activity
-deadline), not speed. If you add one, assume a cold CI runner can pause
-your thread for 100ms whenever it likes.
+The status and snapshot golden files under `tests/golden/` are the
+compatibility referees for externally parsed output; regenerating them is a
+deliberate, reviewed act.
 
 ## Security posture
 
-Summaries are LLM prose generated from **untrusted agent transcripts**:
+Summaries are generated from untrusted agent transcripts:
 
-- codex runs `--sandbox read-only --ephemeral --ignore-user-config`
-- the bundled ACP example disables tools, inherited settings, and MCP servers
-- every summary is sanitized to letters, digits, and basic punctuation
-  before it reaches any `speak_command`
+- Codex runs read-only, ephemeral, and without user configuration.
+- The standalone ACP example disables tools, inherited settings, and MCP
+  servers.
+- Every summary is sanitized before it reaches a custom speech command.
+- Configured command secrets and API keys are redacted from errors, logs, and
+  status output.
 
-Keep all three when touching the pipeline.
+Keep all four properties when changing the pipeline.

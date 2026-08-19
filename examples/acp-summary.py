@@ -14,20 +14,114 @@ import sys
 import tempfile
 import threading
 import time
-from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-try:
-    from announcer.deadline import TwoPhaseDeadline, read_lines, stop_subprocess
-except ImportError as error:
-    print(
-        "acp-summary: expected announcer/ beside examples/ ({})".format(error),
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
+class TwoPhaseDeadline:
+    """Wait for initial activity, then grant a fresh completion window."""
+
+    def __init__(
+        self,
+        first_activity_deadline=None,
+        completion_timeout=None,
+        deadline=None,
+        first_timeout_message="no activity",
+        completion_timeout_message="operation timed out",
+        clock=time.monotonic,
+    ):
+        self.first_activity_deadline = first_activity_deadline
+        self.completion_timeout = completion_timeout
+        self.deadline = deadline
+        self.first_timeout_message = first_timeout_message
+        self.completion_timeout_message = completion_timeout_message
+        self.clock = clock
+        self.activity_seen = first_activity_deadline is None
+
+    def active_deadline(self):
+        deadline = self.deadline if self.activity_seen else self.first_activity_deadline
+        if deadline is None:
+            raise ValueError("a response deadline is required")
+        return deadline
+
+    def remaining(self):
+        remaining = self.active_deadline() - self.clock()
+        if remaining <= 0:
+            self.raise_timeout()
+        return remaining
+
+    def raise_timeout(self):
+        message = (
+            self.completion_timeout_message
+            if self.activity_seen
+            else self.first_timeout_message
+        )
+        raise TimeoutError(message)
+
+    def record_activity(self):
+        if self.activity_seen:
+            return
+        self.activity_seen = True
+        if self.completion_timeout is not None:
+            self.deadline = self.clock() + self.completion_timeout
+
+    def get(self, messages):
+        try:
+            return messages.get(timeout=self.remaining())
+        except queue.Empty:
+            self.raise_timeout()
+
+
+def read_lines(stream, messages):
+    try:
+        for line in iter(stream.readline, ""):
+            messages.put(line)
+    finally:
+        messages.put(None)
+
+
+def stop_subprocess(process, clean_exit=False, deadline=None, clock=time.monotonic):
+    if clean_exit and process.stdin is not None:
+        try:
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+    if process.poll() is not None:
+        return
+
+    if deadline is None:
+        deadline = clock() + 0.5
+    if clean_exit:
+        grace = min(1.0, max(0.0, deadline - clock()))
+        if grace:
+            try:
+                process.wait(timeout=grace)
+                return
+            except subprocess.TimeoutExpired:
+                pass
+
+    if clock() >= deadline:
+        try:
+            process.kill()
+        except OSError:
+            pass
+        return
+    try:
+        process.terminate()
+    except OSError:
+        return
+    termination_grace = max(0.0, min(0.5, deadline - clock()))
+    if not termination_grace:
+        try:
+            process.kill()
+        except OSError:
+            pass
+        return
+    try:
+        process.wait(timeout=termination_grace)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except OSError:
+            pass
 
 
 COMMAND = ["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.70.0"]

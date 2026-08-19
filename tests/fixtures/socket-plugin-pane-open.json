@@ -1,0 +1,51 @@
+{
+  "request": {
+    "id": "nhclink16.contract-probe:plugin.pane.open",
+    "method": "plugin.pane.open",
+    "params": {
+      "cwd": "/tmp/herdr-contract-probe.2Nj70g",
+      "direction": "right",
+      "entrypoint": "capture-env",
+      "env": {
+        "CONTRACT_PROBE_MARKER": "phase0"
+      },
+      "focus": false,
+      "plugin_id": "nhclink16.contract-probe",
+      "target_pane_id": "w7:p1"
+    }
+  },
+  "request_line": "{\"id\":\"nhclink16.contract-probe:plugin.pane.open\",\"method\":\"plugin.pane.open\",\"params\":{\"plugin_id\":\"nhclink16.contract-probe\",\"entrypoint\":\"capture-env\",\"target_pane_id\":\"w7:p1\",\"direction\":\"right\",\"cwd\":\"/tmp/herdr-contract-probe.2Nj70g\",\"env\":{\"CONTRACT_PROBE_MARKER\":\"phase0\"},\"focus\":false}}\\n",
+  "response": {
+    "id": "nhclink16.contract-probe:plugin.pane.open",
+    "result": {
+      "plugin_pane": {
+        "entrypoint": "capture-env",
+        "pane": {
+          "agent_status": "unknown",
+          "cwd": "/tmp/herdr-contract-probe.2Nj70g",
+          "focused": false,
+          "foreground_cwd": "/tmp/herdr-contract-probe.2Nj70g",
+          "label": "Capture pane environment",
+          "pane_id": "w7:p3",
+          "revision": 0,
+          "scroll": {
+            "max_offset_from_bottom": 0,
+            "offset_from_bottom": 0,
+            "viewport_rows": 43
+          },
+          "tab_id": "w7:t1",
+          "terminal_id": "term_6595c9e423cbe1f",
+          "workspace_id": "w7"
+        },
+        "plugin_id": "nhclink16.contract-probe"
+      },
+      "type": "plugin_pane_opened"
+    }
+  },
+  "response_line": "{\"id\":\"nhclink16.contract-probe:plugin.pane.open\",\"result\":{\"type\":\"plugin_pane_opened\",\"plugin_pane\":{\"plugin_id\":\"nhclink16.contract-probe\",\"entrypoint\":\"capture-env\",\"pane\":{\"pane_id\":\"w7:p3\",\"terminal_id\":\"term_6595c9e423cbe1f\",\"workspace_id\":\"w7\",\"tab_id\":\"w7:t1\",\"focused\":false,\"cwd\":\"/tmp/herdr-contract-probe.2Nj70g\",\"foreground_cwd\":\"/tmp/herdr-contract-probe.2Nj70g\",\"label\":\"Capture pane environment\",\"agent_status\":\"unknown\",\"scroll\":{\"offset_from_bottom\":0,\"max_offset_from_bottom\":0,\"viewport_rows\":43},\"revision\":0}}}}\\n",
+  "transport": {
+    "connection_policy": "one request per connection",
+    "framing": "newline-delimited JSON",
+    "socket_path": "/home/nicholas/.config/herdr/herdr.sock"
+  }
+}

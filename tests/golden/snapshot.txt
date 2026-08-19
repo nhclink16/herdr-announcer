@@ -1,0 +1,27 @@
+◆ Announcer  live
+│  config tests/fixtures/dirs/config/config.toml
+│
+│  Recent
+│    12:04:11  done      pane-1        error  (command-sk-status-secret-4321;elevenla…
+│    12:03:10  idle      pane-2        announced+summary-template+speak-command
+│    12:02:09  working   pane-old      skipped-status
+│
+│
+│
+│ ❯ Snooze   off  s cycles 5m / 30m / 2h / tomorrow / off
+│
+│  Announce on
+│  ◼ done     an agent finished work you weren't watching
+│  ◻ blocked  an agent is waiting on your input
+│  ◼ idle     an agent settled while you were watching
+│  ◻ working  an agent started doing something (chatty)
+│  ◼ unknown  unrecognized agent activity (chatty)
+│
+│  ◼ toast    mirror each announcement as a Herdr notification
+│  voice    custom command  helper --api-key '****4321' '{text}'
+│  tools    codex ✗  claude ✗  say ✗  spd-say ✗  espeak-ng ✗  espeak ✗
+│
+│  ▸ Test voice     speak a sample announcement now
+│  ▸ Full setup     open the setup wizard (replaces this screen)
+└
+j/k or arrows move · space/enter toggle · s snooze · t test · w wizard · r reload · q quit

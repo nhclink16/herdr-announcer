@@ -1,0 +1,30 @@
+{
+  "capture_kind": "action",
+  "captured_at_unix_ns": 1787104042659924063,
+  "context_json": {
+    "correlation_id": "cli:plugin",
+    "focused_pane_cwd": "/tmp/herdr-contract-probe.2Nj70g",
+    "focused_pane_id": "w7:p1",
+    "focused_pane_status": "unknown",
+    "invocation_source": "cli",
+    "tab_id": "w7:t1",
+    "tab_label": "1",
+    "workspace_cwd": "/tmp/herdr-contract-probe.2Nj70g",
+    "workspace_id": "w7",
+    "workspace_label": "contract-probe-phase0"
+  },
+  "env": {
+    "HERDR_BIN_PATH": "/home/nicholas/.local/bin/herdr",
+    "HERDR_ENV": "1",
+    "HERDR_PANE_ID": "w7:p1",
+    "HERDR_PLUGIN_ACTION_ID": "capture-context",
+    "HERDR_PLUGIN_CONFIG_DIR": "/home/nicholas/.config/herdr/plugins/config/nhclink16.contract-probe",
+    "HERDR_PLUGIN_CONTEXT_JSON": "{\"workspace_id\":\"w7\",\"workspace_label\":\"contract-probe-phase0\",\"workspace_cwd\":\"/tmp/herdr-contract-probe.2Nj70g\",\"tab_id\":\"w7:t1\",\"tab_label\":\"1\",\"focused_pane_id\":\"w7:p1\",\"focused_pane_cwd\":\"/tmp/herdr-contract-probe.2Nj70g\",\"focused_pane_status\":\"unknown\",\"invocation_source\":\"cli\",\"correlation_id\":\"cli:plugin\"}",
+    "HERDR_PLUGIN_ID": "nhclink16.contract-probe",
+    "HERDR_PLUGIN_ROOT": "/tmp/herdr-contract-probe.2Nj70g",
+    "HERDR_PLUGIN_STATE_DIR": "/home/nicholas/.local/state/herdr/plugins/nhclink16.contract-probe",
+    "HERDR_SOCKET_PATH": "/home/nicholas/.config/herdr/herdr.sock",
+    "HERDR_TAB_ID": "w7:t1",
+    "HERDR_WORKSPACE_ID": "w7"
+  }
+}

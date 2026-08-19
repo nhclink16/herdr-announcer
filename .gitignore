@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+/target/
 # runtime artifacts (never written into the repo since 0.8.0; kept as a belt against older builds)
 *.log
 speak.lock

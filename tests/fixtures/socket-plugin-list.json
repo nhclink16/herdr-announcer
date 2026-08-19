@@ -1,0 +1,102 @@
+{
+  "request": {
+    "id": "nhclink16.contract-probe:plugin.list",
+    "method": "plugin.list",
+    "params": {
+      "plugin_id": "nhclink16.contract-probe"
+    }
+  },
+  "request_line": "{\"id\":\"nhclink16.contract-probe:plugin.list\",\"method\":\"plugin.list\",\"params\":{\"plugin_id\":\"nhclink16.contract-probe\"}}\\n",
+  "response": {
+    "id": "nhclink16.contract-probe:plugin.list",
+    "result": {
+      "plugins": [
+        {
+          "actions": [
+            {
+              "command": [
+                "python3",
+                "dump.py",
+                "action"
+              ],
+              "contexts": [
+                "pane"
+              ],
+              "description": "Dump the pane invocation context for Phase 0 verification",
+              "id": "capture-context",
+              "title": "Capture pane context"
+            }
+          ],
+          "description": "Throwaway Phase 0 live contract probe",
+          "enabled": true,
+          "events": [
+            {
+              "command": [
+                "python3",
+                "dump.py",
+                "hook"
+              ],
+              "on": "pane.agent_detected"
+            },
+            {
+              "command": [
+                "python3",
+                "dump.py",
+                "hook"
+              ],
+              "on": "pane.agent_status_changed"
+            },
+            {
+              "command": [
+                "python3",
+                "dump.py",
+                "hook"
+              ],
+              "on": "pane.closed"
+            },
+            {
+              "command": [
+                "python3",
+                "dump.py",
+                "hook"
+              ],
+              "on": "pane.exited"
+            }
+          ],
+          "manifest_path": "/tmp/herdr-contract-probe.2Nj70g/herdr-plugin.toml",
+          "min_herdr_version": "0.8.0",
+          "name": "Herdr Contract Probe",
+          "panes": [
+            {
+              "command": [
+                "python3",
+                "dump.py",
+                "pane"
+              ],
+              "description": "Dump the plugin-pane environment for Phase 0 verification",
+              "id": "capture-env",
+              "placement": "split",
+              "title": "Capture pane environment"
+            }
+          ],
+          "platforms": [
+            "linux"
+          ],
+          "plugin_id": "nhclink16.contract-probe",
+          "plugin_root": "/tmp/herdr-contract-probe.2Nj70g",
+          "source": {
+            "kind": "local"
+          },
+          "version": "0.0.0"
+        }
+      ],
+      "type": "plugin_list"
+    }
+  },
+  "response_line": "{\"id\":\"nhclink16.contract-probe:plugin.list\",\"result\":{\"type\":\"plugin_list\",\"plugins\":[{\"plugin_id\":\"nhclink16.contract-probe\",\"name\":\"Herdr Contract Probe\",\"version\":\"0.0.0\",\"min_herdr_version\":\"0.8.0\",\"description\":\"Throwaway Phase 0 live contract probe\",\"manifest_path\":\"/tmp/herdr-contract-probe.2Nj70g/herdr-plugin.toml\",\"plugin_root\":\"/tmp/herdr-contract-probe.2Nj70g\",\"enabled\":true,\"platforms\":[\"linux\"],\"actions\":[{\"id\":\"capture-context\",\"title\":\"Capture pane context\",\"description\":\"Dump the pane invocation context for Phase 0 verification\",\"contexts\":[\"pane\"],\"command\":[\"python3\",\"dump.py\",\"action\"]}],\"events\":[{\"on\":\"pane.agent_detected\",\"command\":[\"python3\",\"dump.py\",\"hook\"]},{\"on\":\"pane.agent_status_changed\",\"command\":[\"python3\",\"dump.py\",\"hook\"]},{\"on\":\"pane.closed\",\"command\":[\"python3\",\"dump.py\",\"hook\"]},{\"on\":\"pane.exited\",\"command\":[\"python3\",\"dump.py\",\"hook\"]}],\"panes\":[{\"id\":\"capture-env\",\"title\":\"Capture pane environment\",\"description\":\"Dump the plugin-pane environment for Phase 0 verification\",\"placement\":\"split\",\"command\":[\"python3\",\"dump.py\",\"pane\"]}],\"source\":{\"kind\":\"local\"}}]}}\\n",
+  "transport": {
+    "connection_policy": "one request per connection",
+    "framing": "newline-delimited JSON",
+    "socket_path": "/home/nicholas/.config/herdr/herdr.sock"
+  }
+}

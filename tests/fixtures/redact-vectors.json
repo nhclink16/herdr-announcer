@@ -1,0 +1,38 @@
+{
+  "mask": [
+    {"input": "super-secret-1234", "expected": "****1234"},
+    {"input": "key", "expected": "****"},
+    {"input": "", "expected": ""}
+  ],
+  "commands": [
+    {
+      "input": ["helper", "--api-key", "super-secret-1234", "--token=token-value-5678", "SERVICE_PASSWORD=password-9012", "-H", "Authorization: Bearer bearer-secret-3456"],
+      "expected": ["helper", "--api-key", "****1234", "--token=****5678", "SERVICE_PASSWORD=****9012", "-H", "Authorization: Bearer ****3456"]
+    },
+    {"input": ["helper", "sk-example-secret-1234"], "expected": ["helper", "****1234"]},
+    {"input": ["helper", "ghp_example-token-5678"], "expected": ["helper", "****5678"]},
+    {"input": ["helper", "xoxb-example-secret-9012"], "expected": ["helper", "****9012"]},
+    {"input": ["helper", "AKIAIOSFODNN7EXAMPLE"], "expected": ["helper", "****MPLE"]},
+    {"input": ["helper", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signatureABCD1234"], "expected": ["helper", "****1234"]},
+    {"input": ["helper", "Bearer bearer-secret-3456"], "expected": ["helper", "Bearer ****3456"]},
+    {"input": ["helper", "AbCdEfGhIjKlMnOp1234"], "expected": ["helper", "****1234"]},
+    {"input": ["sk-single-command-secret-1234"], "expected": ["****1234"]},
+    {"input": ["helper", "MODE=debug", "--output=<REPO>/examples/acp-summary.py"], "expected": ["helper", "MODE=debug", "--output=<REPO>/examples/acp-summary.py"]},
+    {"input": ["helper", "--verbose", "word", "-XPOST"], "expected": ["helper", "--verbose", "word", "-XPOST"]},
+    {"input": ["mysql", "-psuper-secret-1234"], "expected": ["mysql", "-p****1234"]},
+    {"input": ["curl", "-HAuthorization: Bearer super-secret-1234"], "expected": ["curl", "-HAuthorization: Bearer ****1234"]},
+    {"input": ["helper", "--tokensuper-secret-1234"], "expected": ["helper", "--token****1234"]}
+  ],
+  "texts": [
+    {
+      "command": ["helper", "--api-key", "super-secret-1234"],
+      "input": "Command '['helper', '--api-key', 'super-secret-1234']' returned non-zero exit status 2",
+      "expected": "Command '['helper', '--api-key', '****1234']' returned non-zero exit status 2"
+    },
+    {
+      "command": ["helper", "sk-private-topic-4321"],
+      "input": "['helper', 'sk-private-topic-4321']",
+      "expected": "['helper', '****4321']"
+    }
+  ]
+}

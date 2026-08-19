@@ -1,0 +1,26 @@
+{
+  "capture_kind": "hook",
+  "captured_at_unix_ns": 1787104179624504884,
+  "env": {
+    "HERDR_BIN_PATH": "/home/nicholas/.local/bin/herdr",
+    "HERDR_ENV": "1",
+    "HERDR_PANE_ID": "w7:p2",
+    "HERDR_PLUGIN_CONFIG_DIR": "/home/nicholas/.config/herdr/plugins/config/nhclink16.contract-probe",
+    "HERDR_PLUGIN_CONTEXT_JSON": "{\"workspace_id\":\"w7\",\"focused_pane_id\":\"w7:p2\",\"invocation_source\":\"api\",\"correlation_id\":\"pane.closed\"}",
+    "HERDR_PLUGIN_EVENT": "pane.closed",
+    "HERDR_PLUGIN_EVENT_JSON": "{\"event\":\"pane_closed\",\"data\":{\"type\":\"pane_closed\",\"pane_id\":\"w7:p2\",\"workspace_id\":\"w7\"}}",
+    "HERDR_PLUGIN_ID": "nhclink16.contract-probe",
+    "HERDR_PLUGIN_ROOT": "/tmp/herdr-contract-probe.2Nj70g",
+    "HERDR_PLUGIN_STATE_DIR": "/home/nicholas/.local/state/herdr/plugins/nhclink16.contract-probe",
+    "HERDR_SOCKET_PATH": "/home/nicholas/.config/herdr/herdr.sock",
+    "HERDR_WORKSPACE_ID": "w7"
+  },
+  "event_json": {
+    "data": {
+      "pane_id": "w7:p2",
+      "type": "pane_closed",
+      "workspace_id": "w7"
+    },
+    "event": "pane_closed"
+  }
+}

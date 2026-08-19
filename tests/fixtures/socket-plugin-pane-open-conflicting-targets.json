@@ -1,0 +1,33 @@
+{
+  "request": {
+    "id": "nhclink16.contract-probe:plugin.pane.open",
+    "method": "plugin.pane.open",
+    "params": {
+      "cwd": "/tmp/herdr-contract-probe.2Nj70g",
+      "direction": "right",
+      "entrypoint": "capture-env",
+      "env": {
+        "CONTRACT_PROBE_MARKER": "phase0"
+      },
+      "focus": false,
+      "placement": "split",
+      "plugin_id": "nhclink16.contract-probe",
+      "target_pane_id": "w7:p1",
+      "workspace_id": "w7"
+    }
+  },
+  "request_line": "{\"id\":\"nhclink16.contract-probe:plugin.pane.open\",\"method\":\"plugin.pane.open\",\"params\":{\"plugin_id\":\"nhclink16.contract-probe\",\"entrypoint\":\"capture-env\",\"workspace_id\":\"w7\",\"target_pane_id\":\"w7:p1\",\"placement\":\"split\",\"direction\":\"right\",\"cwd\":\"/tmp/herdr-contract-probe.2Nj70g\",\"env\":{\"CONTRACT_PROBE_MARKER\":\"phase0\"},\"focus\":false}}\\n",
+  "response": {
+    "error": {
+      "code": "invalid_params",
+      "message": "split and zoomed plugin panes target an existing pane; use target_pane_id"
+    },
+    "id": "nhclink16.contract-probe:plugin.pane.open"
+  },
+  "response_line": "{\"id\":\"nhclink16.contract-probe:plugin.pane.open\",\"error\":{\"code\":\"invalid_params\",\"message\":\"split and zoomed plugin panes target an existing pane; use target_pane_id\"}}\\n",
+  "transport": {
+    "connection_policy": "one request per connection",
+    "framing": "newline-delimited JSON",
+    "socket_path": "/home/nicholas/.config/herdr/herdr.sock"
+  }
+}

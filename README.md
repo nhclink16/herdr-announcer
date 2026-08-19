@@ -6,10 +6,10 @@
 one-sentence summary when a coding agent finishes its work or gets stuck
 waiting for you.
 
-[![test](https://github.com/nhclink16/herdr-announcer/actions/workflows/test.yml/badge.svg)](https://github.com/nhclink16/herdr-announcer/actions/workflows/test.yml)
+[![ci](https://github.com/nhclink16/herdr-announcer/actions/workflows/ci.yml/badge.svg)](https://github.com/nhclink16/herdr-announcer/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/nhclink16/herdr-announcer)](https://github.com/nhclink16/herdr-announcer/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-![herdr](https://img.shields.io/badge/herdr-%E2%89%A5%200.7.0-8A2BE2)
+![herdr](https://img.shields.io/badge/herdr-%E2%89%A5%200.8.0-8A2BE2)
 
 [Install](#install) · [Quick start](#quick-start) ·
 [Configuration](docs/configuration.md) ·
@@ -27,8 +27,18 @@ downgrade logic left untouched."*
 
 ## Install
 
+Herdr 0.8.0 or newer and a stable Rust toolchain with `cargo` are required.
+The plugin's `[[build]]` entry runs `cargo build --release` during install:
+
 ```bash
-herdr plugin install nhclink16/herdr-announcer
+herdr plugin install nhclink16/herdr-announcer --yes
+```
+
+For a local checkout, build first and link the repository:
+
+```bash
+cargo build --release
+herdr plugin link .
 ```
 
 ## Quick start
@@ -42,8 +52,9 @@ text-to-speech.
 > an LLM sentence.
 
 Open the control panel — recent announcements with their reasons, snooze
-(5m / 30m / 2h / until tomorrow), toggles, and a voice test, every control
-also available as a palette action:
+(5m / 30m / 2h / until tomorrow), mutes, toggles, and a voice test. Use the
+keyboard or mouse, scroll the log with the wheel or Page Up/Page Down, and
+press Esc to close it. Every control is also available as a palette action:
 
 ```bash
 herdr plugin pane open --plugin nhclink16.announcer --entrypoint dashboard
@@ -58,9 +69,30 @@ herdr plugin pane open --plugin nhclink16.announcer --entrypoint setup
 herdr plugin action invoke nhclink16.announcer.test
 ```
 
-(Or from the plugin directory in any terminal: `python3 announce.py setup`.
-Ctrl-C exits without writing; the wizard previews the config and asks before
-saving.)
+(Or from the plugin directory in any terminal:
+`target/release/herdr-announcer setup`. Ctrl-C exits without writing; the
+wizard previews the config and asks before saving.)
+
+## Actions and panes
+
+The manifest exposes 12 palette actions and two pane entrypoints:
+
+| ID | Context | Description |
+| --- | --- | --- |
+| `mute-pane` | pane | Toggle announcements for this pane; the mute dies with the pane |
+| `snooze-pane` | pane | Cycle this pane's snooze: 5m, 30m, 2h, off |
+| `announce-now` | pane | Summarize and speak this pane's current status immediately |
+| `test` | workspace | Speak a sample announcement with the configured voice |
+| `status` | workspace | Show configuration, detected tools, and recent log lines |
+| `open-dashboard` | workspace | Open the live dashboard popup |
+| `snooze-5m` | workspace | Silence all announcements for 5 minutes |
+| `snooze-30m` | workspace | Silence all announcements for 30 minutes |
+| `snooze-2h` | workspace | Silence all announcements for 2 hours |
+| `snooze-tomorrow` | workspace | Silence all announcements until 8:00 tomorrow |
+| `snooze-off` | workspace | End any active global snooze immediately |
+| `toggle-toast` | workspace | Toggle Herdr notification mirroring |
+| `setup` | pane entrypoint | Open the interactive setup wizard in a split |
+| `dashboard` | pane entrypoint | Open the live dashboard in a 94×30 popup |
 
 <details>
 <summary>Bind the wizard and status to keys</summary>
@@ -86,8 +118,12 @@ description = "announcer status"
 ## Features
 
 - **A dashboard in a popup** — snooze, toggles, the recent-announcement
-  log with failure reasons, and a voice test, one keybind away; agents can
-  drive every control through `herdr plugin action invoke`
+  log with failure reasons, per-agent and per-pane mute state, mouse controls,
+  scrolling, and a voice test, one keybind away; agents can drive every
+  control through `herdr plugin action invoke`
+- **Mute exactly what you mean** — silence an agent type in config or toggle a
+  pane until it closes; pane actions can also snooze one pane or announce it
+  immediately
 - **Real summaries, not "task complete"** — one spoken sentence generated
   from the tail of the agent's terminal output, by sandboxed `codex exec`,
   any CLI LLM, or instant template phrasing with no LLM at all
@@ -109,11 +145,13 @@ description = "announcer status"
 
 ```mermaid
 flowchart LR
-    E["pane.agent_status_changed"] --> F{"announce<br/>list?"}
+    E["Herdr event"] --> F{"announce<br/>list?"}
     F -- no --> X["skip"]
-    F -- yes --> D{"debounced?"}
+    F -- yes --> M{"muted or<br/>snoozed?"}
+    M -- yes --> X
+    M -- no --> D{"debounced?"}
     D -- yes --> X
-    D -- no --> T["read transcript<br/>via herdr CLI"]
+    D -- no --> T["read transcript<br/>via Herdr socket"]
     T --> S["summarize<br/>codex · command · template"]
     S -- failure + reason --> B["template fallback"]
     S --> Z["sanitize"]
@@ -127,13 +165,15 @@ sanitized to plain words before any `speak_command` sees them.
 
 ## Requirements & limitations
 
-- Herdr ≥ 0.7.0, macOS or Linux, Python 3.9+. Linux local TTS wants
+- Herdr ≥ 0.8.0, macOS or Linux, and a stable Rust toolchain for installation.
+  Linux local TTS wants
   `espeak-ng`, `espeak`, or `spd-say` ([one caveat](docs/configuration.md#voices));
   macOS needs nothing.
 - **Watched work doesn't announce.** Herdr marks an agent `done` only when
   it finishes *unseen*; a pane you're actively viewing settles as `idle`.
   That's by design — the announcer covers work behind your back.
-- No per-agent filtering yet — every detected agent announces.
+- Herdr 0.8.0 accepts the per-pane `muted` metadata token but does not render a
+  visible pane badge for it; the dashboard and action toasts show mute state.
 
 > [!WARNING]
 > Audio plays on the machine running the Herdr server. Attached over SSH?

@@ -1,0 +1,72 @@
+{
+  "request": {
+    "id": "nhclink16.contract-probe:workspace.list",
+    "method": "workspace.list",
+    "params": {}
+  },
+  "request_line": "{\"id\":\"nhclink16.contract-probe:workspace.list\",\"method\":\"workspace.list\",\"params\":{}}\\n",
+  "response": {
+    "id": "nhclink16.contract-probe:workspace.list",
+    "result": {
+      "type": "workspace_list",
+      "workspaces": [
+        {
+          "active_tab_id": "w2:t2",
+          "agent_status": "idle",
+          "focused": false,
+          "label": "arch",
+          "number": 1,
+          "pane_count": 4,
+          "tab_count": 2,
+          "workspace_id": "w2"
+        },
+        {
+          "active_tab_id": "w3:t1",
+          "agent_status": "idle",
+          "focused": false,
+          "label": "herdr-plugins",
+          "number": 2,
+          "pane_count": 2,
+          "tab_count": 1,
+          "workspace_id": "w3"
+        },
+        {
+          "active_tab_id": "w5:t1",
+          "agent_status": "working",
+          "focused": true,
+          "label": "announcer",
+          "number": 3,
+          "pane_count": 3,
+          "tab_count": 1,
+          "workspace_id": "w5"
+        },
+        {
+          "active_tab_id": "w6:t1",
+          "agent_status": "idle",
+          "focused": false,
+          "label": "nicholas",
+          "number": 4,
+          "pane_count": 2,
+          "tab_count": 1,
+          "workspace_id": "w6"
+        },
+        {
+          "active_tab_id": "w7:t1",
+          "agent_status": "unknown",
+          "focused": false,
+          "label": "contract-probe-phase0",
+          "number": 5,
+          "pane_count": 1,
+          "tab_count": 1,
+          "workspace_id": "w7"
+        }
+      ]
+    }
+  },
+  "response_line": "{\"id\":\"nhclink16.contract-probe:workspace.list\",\"result\":{\"type\":\"workspace_list\",\"workspaces\":[{\"workspace_id\":\"w2\",\"number\":1,\"label\":\"arch\",\"focused\":false,\"pane_count\":4,\"tab_count\":2,\"active_tab_id\":\"w2:t2\",\"agent_status\":\"idle\"},{\"workspace_id\":\"w3\",\"number\":2,\"label\":\"herdr-plugins\",\"focused\":false,\"pane_count\":2,\"tab_count\":1,\"active_tab_id\":\"w3:t1\",\"agent_status\":\"idle\"},{\"workspace_id\":\"w5\",\"number\":3,\"label\":\"announcer\",\"focused\":true,\"pane_count\":3,\"tab_count\":1,\"active_tab_id\":\"w5:t1\",\"agent_status\":\"working\"},{\"workspace_id\":\"w6\",\"number\":4,\"label\":\"nicholas\",\"focused\":false,\"pane_count\":2,\"tab_count\":1,\"active_tab_id\":\"w6:t1\",\"agent_status\":\"idle\"},{\"workspace_id\":\"w7\",\"number\":5,\"label\":\"contract-probe-phase0\",\"focused\":false,\"pane_count\":1,\"tab_count\":1,\"active_tab_id\":\"w7:t1\",\"agent_status\":\"unknown\"}]}}\\n",
+  "transport": {
+    "connection_policy": "one request per connection",
+    "framing": "newline-delimited JSON",
+    "socket_path": "/home/nicholas/.config/herdr/herdr.sock"
+  }
+}

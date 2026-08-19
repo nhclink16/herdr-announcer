@@ -1,0 +1,41 @@
+herdr-announcer status
+config: tests/fixtures/dirs/config/config.toml (exists)
+state: tests/fixtures/dirs/state
+values:
+  announce = ["done", "idle", "unknown"]
+  debounce_seconds = 12
+  summary = "template"
+  summary_fallback = "template"
+  summary_first_activity_timeout_seconds = 5
+  codex_model = "gpt-5.6-luna"
+  codex_effort = "low"
+  codex_timeout_seconds = 45
+  summary_command = null
+  summary_command_timeout_seconds = 60
+  style = "announcement"
+  custom_prompt = ""
+  speak_command = ["helper", "--api-key", "****4321", "{text}"]
+  elevenlabs_api_key = "****9876"
+  elevenlabs_voice_id = "21m00Tcm4TlvDq8ikWAM"
+  elevenlabs_model = "eleven_turbo_v2_5"
+  voice = ""
+  toast = true
+capabilities:
+  codex: no
+  claude: no
+  say: no
+  spd-say: no
+  espeak-ng: no
+  espeak: no
+  mpv: no
+  ffplay: no
+  afplay: no
+  paplay: no
+  pw-play: no
+  aplay: no
+unrecognized keys: unknown_zebra
+last error: 2026-08-17T12:04:11+02:00 command ****4321 failed;provider rejected ****9876
+log (last 8 lines):
+  2026-08-17T12:02:09+02:00 pane_id=pane-old status=working action=skipped-status elapsed=0.003 reasons=
+  2026-08-17T12:03:10+02:00 pane_id=pane-2 status=idle action=announced+summary-template+speak-command elapsed=0.218 reasons=
+  2026-08-17T12:04:11+02:00 pane_id=pane-1 status=done action=error elapsed=0.421 reasons=command-****4321;****9876

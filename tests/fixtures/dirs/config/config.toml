@@ -1,0 +1,7 @@
+announce = ["done", "idle", "unknown"]
+debounce_seconds = 12
+summary = "template"
+speak_command = ["helper", "--api-key", "sk-status-secret-4321", "{text}"]
+elevenlabs_api_key = "elevenlabs-fixture-9876"
+toast = true
+unknown_zebra = "kept only for status diagnostics"
