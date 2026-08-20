@@ -713,7 +713,9 @@ class SnoozeHookTests(DashboardTestCase):
         dashboard.write_snooze(self.state_dir, time.time() + 600.0)
         with self.event_env(), \
                 mock.patch.object(announce, "speak") as speak, \
-                mock.patch.object(announce, "get_context") as get_context, \
+                mock.patch.object(
+                    announce, "get_context_with_active_panes"
+                ) as get_context, \
                 mock.patch.object(announce, "get_transcript") as get_transcript:
             result = self.process()
 
@@ -749,8 +751,9 @@ class SnoozeHookTests(DashboardTestCase):
     def test_snoozed_event_does_not_consume_the_debounce_slot(self):
         dashboard.write_snooze(self.state_dir, time.time() + 600.0)
         with self.event_env(), \
-                mock.patch.object(announce, "get_context",
-                                  return_value=("builder", "billing")), \
+                mock.patch.object(
+                    announce, "get_context_with_active_panes",
+                    return_value=("builder", "billing", {"pane-1"})), \
                 mock.patch.object(announce, "get_transcript", return_value="out"), \
                 mock.patch.object(announce, "make_announcement",
                                   return_value=("all done", "template")), \
@@ -762,8 +765,9 @@ class SnoozeHookTests(DashboardTestCase):
     def test_expired_snooze_runs_the_normal_path(self):
         dashboard.write_snooze(self.state_dir, time.time() - 60.0)
         with self.event_env(), \
-                mock.patch.object(announce, "get_context",
-                                  return_value=("builder", "billing")), \
+                mock.patch.object(
+                    announce, "get_context_with_active_panes",
+                    return_value=("builder", "billing", {"pane-1"})), \
                 mock.patch.object(announce, "get_transcript", return_value="out"), \
                 mock.patch.object(announce, "make_announcement",
                                   return_value=("all done", "template")), \
@@ -775,8 +779,9 @@ class SnoozeHookTests(DashboardTestCase):
 
     def test_missing_snooze_file_runs_the_normal_path(self):
         with self.event_env(), \
-                mock.patch.object(announce, "get_context",
-                                  return_value=("builder", "billing")), \
+                mock.patch.object(
+                    announce, "get_context_with_active_panes",
+                    return_value=("builder", "billing", {"pane-1"})), \
                 mock.patch.object(announce, "get_transcript", return_value="out"), \
                 mock.patch.object(announce, "make_announcement",
                                   return_value=("all done", "template")), \
@@ -789,8 +794,9 @@ class SnoozeHookTests(DashboardTestCase):
         (self.state_dir / "snooze.json").write_text("{not json",
                                                     encoding="utf-8")
         with self.event_env(), \
-                mock.patch.object(announce, "get_context",
-                                  return_value=("builder", "billing")), \
+                mock.patch.object(
+                    announce, "get_context_with_active_panes",
+                    return_value=("builder", "billing", {"pane-1"})), \
                 mock.patch.object(announce, "get_transcript", return_value="out"), \
                 mock.patch.object(announce, "make_announcement",
                                   return_value=("all done", "template")), \
@@ -804,8 +810,9 @@ class SnoozeHookTests(DashboardTestCase):
         (self.state_dir / "snooze.json").write_text('{"until": 1e999}',
                                                     encoding="utf-8")
         with self.event_env(), \
-                mock.patch.object(announce, "get_context",
-                                  return_value=("builder", "billing")), \
+                mock.patch.object(
+                    announce, "get_context_with_active_panes",
+                    return_value=("builder", "billing", {"pane-1"})), \
                 mock.patch.object(announce, "get_transcript", return_value="out"), \
                 mock.patch.object(announce, "make_announcement",
                                   return_value=("all done", "template")), \
@@ -817,8 +824,9 @@ class SnoozeHookTests(DashboardTestCase):
     def test_snooze_file_holding_a_list_runs_the_normal_path(self):
         (self.state_dir / "snooze.json").write_text("[1, 2]", encoding="utf-8")
         with self.event_env(), \
-                mock.patch.object(announce, "get_context",
-                                  return_value=("builder", "billing")), \
+                mock.patch.object(
+                    announce, "get_context_with_active_panes",
+                    return_value=("builder", "billing", {"pane-1"})), \
                 mock.patch.object(announce, "get_transcript", return_value="out"), \
                 mock.patch.object(announce, "make_announcement",
                                   return_value=("all done", "template")), \

@@ -103,7 +103,6 @@ def deliver_content_once(
     fingerprint: str,
     check_duplicate: bool,
     deliver: Callable[[], DeliveryResult],
-    active_pane_ids: Optional[Set[str]] = None,
 ) -> Tuple[bool, Optional[DeliveryResult], Optional[OSError]]:
     """Serialize the final duplicate check, delivery, and committed record."""
     import fcntl
@@ -114,19 +113,8 @@ def deliver_content_once(
             state = load_content_fingerprints(
                 state_dir / FINGERPRINT_STATE_FILE
             )
-            active_state = _active_content_fingerprints(
-                state, pane_id, active_pane_ids
-            )
-            pruned = active_state != state
-            state = active_state
             if check_duplicate and state.get(pane_id) == fingerprint:
-                write_error = None
-                if pruned:
-                    try:
-                        _write_content_fingerprints(state_dir, state)
-                    except OSError as error:
-                        write_error = error
-                return False, None, write_error
+                return False, None, None
 
             result = deliver()
             state[pane_id] = fingerprint

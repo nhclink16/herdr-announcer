@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from announcer.config import *  # noqa: F401,F403
+from announcer.fingerprints import *  # noqa: F401,F403
 from announcer.herdr import *  # noqa: F401,F403
 from announcer.log import *  # noqa: F401,F403
 from announcer.paths import *  # noqa: F401,F403
@@ -138,19 +139,62 @@ def process_invocation(
         return "debounced"
 
     try:
-        name, workspace = get_context(herdr_bin, pane_id, reasons)
-        transcript = get_transcript(herdr_bin, pane_id, reasons)
+        name, workspace, active_pane_ids = get_context_with_active_panes(
+            herdr_bin, pane_id, reasons
+        )
+        transcript = summary_transcript(
+            get_transcript(herdr_bin, pane_id, reasons)
+        )
+        fingerprint = content_fingerprint(transcript)
+        try:
+            duplicate_content = is_duplicate_content(
+                state_dir,
+                pane_id,
+                fingerprint,
+                active_pane_ids=active_pane_ids,
+            )
+        except OSError as error:
+            detail = str(error).strip()
+            reasons.append(
+                "fingerprint: {}".format(
+                    detail[:120] if detail else error.__class__.__name__
+                )
+            )
+            duplicate_content = False
+        if status == "done" and duplicate_content:
+            return "skipped-duplicate"
         generated_announcement, summary_backend = make_announcement(
             config, name, workspace, status, transcript, reasons
         )
         announcement = _sanitize_summary(generated_announcement)
-        if config.get("toast"):
-            show_toast(herdr_bin, announcement, reasons)
+
+        def deliver() -> str:
+            if config.get("toast"):
+                show_toast(herdr_bin, announcement, reasons)
+            return speak(config, announcement, state_dir, reasons)
+
         try:
-            backend = speak(config, announcement, state_dir, reasons)
+            delivered, backend, fingerprint_error = deliver_content_once(
+                state_dir,
+                pane_id,
+                fingerprint,
+                check_duplicate=status == "done",
+                deliver=deliver,
+            )
         except PlaybackLockTimeout:
             rollback_debounce(state_dir, pane_id, status, reservation)
             return "gave-up-waiting"
+        if not delivered:
+            return "skipped-duplicate"
+        if fingerprint_error is not None:
+            detail = str(fingerprint_error).strip()
+            reasons.append(
+                "fingerprint: {}".format(
+                    detail[:120]
+                    if detail
+                    else fingerprint_error.__class__.__name__
+                )
+            )
     except Exception:
         rollback_debounce(state_dir, pane_id, status, reservation)
         raise
