@@ -4,6 +4,7 @@ import json
 import math
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -39,6 +40,25 @@ CODEX_MODEL_ACTIVITY_ITEMS = {
     "mcp_tool_call",
     "web_search",
 }
+
+CODEX_STATUS_LINE = re.compile(
+    r"(?:\bContext \d{1,3}% used\b|\b\d{1,3}% context left\b|"
+    r"\bweekly \d{1,3}% left\b)",
+    re.IGNORECASE,
+)
+CODEX_PROGRESS_TIMER = re.compile(
+    r"\((?:(?:\d+h )?\d+m )?\d+s(?= [·•] esc to interrupt\))"
+)
+
+
+def summary_transcript(raw_transcript: str) -> str:
+    """Return stable terminal content for both summarization and dedupe."""
+    content_lines = []
+    for line in raw_transcript.splitlines():
+        if CODEX_STATUS_LINE.search(line):
+            continue
+        content_lines.append(CODEX_PROGRESS_TIMER.sub("(<elapsed>", line))
+    return "\n".join(content_lines).rstrip()
 
 
 def _positive_finite_timeout(value: Any) -> float:
@@ -340,6 +360,8 @@ def command_summary(
 __all__ = [
     "ANNOUNCEMENT_PROMPT",
     "CODEX_MODEL_ACTIVITY_ITEMS",
+    "CODEX_PROGRESS_TIMER",
+    "CODEX_STATUS_LINE",
     "SUMMARY_PROMPT",
     "_collect_codex_summary",
     "_drain_stream",
@@ -350,5 +372,6 @@ __all__ = [
     "build_prompt",
     "codex_summary",
     "command_summary",
+    "summary_transcript",
     "template_summary",
 ]

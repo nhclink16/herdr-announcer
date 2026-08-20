@@ -2,7 +2,7 @@
 
 import json
 import subprocess
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 
 VALID_STATUSES = {"idle", "working", "blocked", "done", "unknown"}
@@ -82,19 +82,25 @@ def _short_error(error: BaseException) -> str:
     return detail[:120] if detail else error.__class__.__name__
 
 
-def get_context(
+def get_context_with_active_panes(
     herdr_bin: str, pane_id: str, reasons: Optional[List[str]] = None
-) -> Tuple[str, str]:
+) -> Tuple[str, str, Optional[Set[str]]]:
     try:
         agents_payload = json.loads(_run_text([herdr_bin, "agent", "list"]))
         agents = _records_from_result(agents_payload, "agents")
+        active_pane_ids = {
+            value
+            for item in agents
+            for value in (item.get("pane_id"),)
+            if isinstance(value, str) and value
+        }
         record = next(
             (item for item in agents if item.get("pane_id") == pane_id), None
         )
         if record is None:
             if reasons is not None:
                 reasons.append("herdr: pane-not-found")
-            return "an agent", ""
+            return "an agent", "", active_pane_ids
         name_value = record.get("name")
         kind_value = record.get("agent")
         name = (
@@ -106,11 +112,11 @@ def get_context(
         )
         workspace_id = record.get("workspace_id")
         if not isinstance(workspace_id, str) or not workspace_id:
-            return name, ""
+            return name, "", active_pane_ids
     except (OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
         if reasons is not None:
             reasons.append("herdr-agent: {}".format(_short_error(error)))
-        return "an agent", ""
+        return "an agent", "", None
 
     try:
         workspaces_payload = json.loads(
@@ -129,15 +135,24 @@ def get_context(
         if workspace is None:
             if reasons is not None:
                 reasons.append("herdr: workspace-not-found")
-            return name, ""
+            return name, "", active_pane_ids
         for key in ("label", "title", "name"):
             value = workspace.get(key)
             if isinstance(value, str) and value:
-                return name, value
+                return name, value, active_pane_ids
     except (OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
         if reasons is not None:
             reasons.append("herdr-workspace: {}".format(_short_error(error)))
-    return name, ""
+    return name, "", active_pane_ids
+
+
+def get_context(
+    herdr_bin: str, pane_id: str, reasons: Optional[List[str]] = None
+) -> Tuple[str, str]:
+    name, workspace, _active_pane_ids = get_context_with_active_panes(
+        herdr_bin, pane_id, reasons
+    )
+    return name, workspace
 
 
 def _extract_read_text(raw_output: str) -> str:
@@ -195,6 +210,7 @@ __all__ = [
     "_records_from_result",
     "_run_text",
     "get_context",
+    "get_context_with_active_panes",
     "get_transcript",
     "parse_event",
 ]

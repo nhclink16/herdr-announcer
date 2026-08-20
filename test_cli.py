@@ -1,8 +1,11 @@
 import contextlib
 import io
+import json
 import os
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -201,7 +204,9 @@ class OrchestrationTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ, {"HERDR_PLUGIN_EVENT_JSON": event}, clear=False
             ), mock.patch.object(
-                announce, "get_context", return_value=("builder", "work")
+                announce,
+                "get_context_with_active_panes",
+                return_value=("builder", "work", {"p1"}),
             ), mock.patch.object(
                 announce, "get_transcript", return_value="output"
             ), mock.patch.object(
@@ -217,8 +222,12 @@ class OrchestrationTests(unittest.TestCase):
                     )
 
             state = announce.load_debounce_state(state_dir / "last.json")
+            fingerprints = announce.load_content_fingerprints(
+                state_dir / announce.FINGERPRINT_STATE_FILE
+            )
 
         self.assertNotIn("p1", state)
+        self.assertNotIn("p1", fingerprints)
 
     def test_log_reasons_are_appended_after_existing_fields(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -243,6 +252,275 @@ class OrchestrationTests(unittest.TestCase):
 
             self.assertLess(path.stat().st_size, announce.LOG_TAIL_BYTES + 1024)
             self.assertTrue(path.read_bytes().endswith(b"action=new elapsed=0.000\n"))
+
+
+class ContentDedupeCliTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary_directory.name)
+        self.config_dir = self.root / "config"
+        self.state_dir = self.root / "state"
+        self.config_dir.mkdir()
+        self.transcript_path = self.root / "transcript.txt"
+        self.spoken_path = self.root / "spoken.txt"
+
+        self.fake_herdr = self.root / "fake-herdr"
+        self.fake_herdr.write_text(
+            """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+arguments = sys.argv[1:]
+if arguments[:2] == ["agent", "list"]:
+    panes = os.environ.get("ANNOUNCER_TEST_PANES", "p1").split(",")
+    agents = [
+        {"pane_id": pane, "name": "builder", "workspace_id": "w1"}
+        for pane in panes if pane
+    ]
+    print(json.dumps({"result": {"agents": agents}}))
+elif arguments[:2] == ["workspace", "list"]:
+    print(json.dumps({"result": {"workspaces": [{"id": "w1", "label": "work"}]}}))
+elif arguments[:2] in (["agent", "read"], ["pane", "read"]):
+    with open(os.environ["ANNOUNCER_TEST_TRANSCRIPT"], encoding="utf-8") as handle:
+        print(json.dumps({"result": {"text": handle.read()}}))
+else:
+    raise SystemExit("unexpected fake Herdr command: {!r}".format(arguments))
+""",
+            encoding="utf-8",
+        )
+        self.fake_herdr.chmod(0o755)
+
+        self.speaker = self.root / "speaker.py"
+        self.speaker.write_text(
+            """import os
+import sys
+import time
+
+time.sleep(float(os.environ.get("ANNOUNCER_TEST_SPEAKER_DELAY", "0")))
+with open(sys.argv[1], "a", encoding="utf-8") as handle:
+    handle.write(sys.stdin.read() + "\\n")
+""",
+            encoding="utf-8",
+        )
+        command = [sys.executable, str(self.speaker), str(self.spoken_path)]
+        self.config_dir.joinpath("config.toml").write_text(
+            "\n".join(
+                (
+                    'announce = ["done", "blocked"]',
+                    "debounce_seconds = 0",
+                    'summary = "template"',
+                    "speak_command = {}".format(json.dumps(command)),
+                    "",
+                )
+            ),
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def event_environment(self, status="done"):
+        environment = dict(os.environ)
+        environment.update(
+            {
+                "ANNOUNCER_TEST_PANES": "p1",
+                "ANNOUNCER_TEST_TRANSCRIPT": str(self.transcript_path),
+                "HERDR_BIN_PATH": str(self.fake_herdr),
+                "HERDR_PLUGIN_CONFIG_DIR": str(self.config_dir),
+                "HERDR_PLUGIN_EVENT_JSON": json.dumps(
+                    {"pane_id": "p1", "agent_status": status}
+                ),
+                "HERDR_PLUGIN_STATE_DIR": str(self.state_dir),
+            }
+        )
+        return environment
+
+    def announce_command(self):
+        return [sys.executable, str(Path(__file__).with_name("announce.py"))]
+
+    def run_event(self, transcript, status="done", speaker_delay=0.0):
+        self.transcript_path.write_text(transcript, encoding="utf-8")
+        environment = self.event_environment(status)
+        environment["ANNOUNCER_TEST_SPEAKER_DELAY"] = str(speaker_delay)
+        return subprocess.run(
+            self.announce_command(),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+        )
+
+    def actions(self):
+        return [
+            entry.action
+            for entry in announce.read_log(
+                self.state_dir / "announcer.log", limit=10
+            )
+        ]
+
+    def spoken_lines(self):
+        if not self.spoken_path.exists():
+            return []
+        return self.spoken_path.read_text(encoding="utf-8").splitlines()
+
+    def test_same_content_across_processes_announces_once_and_logs_duplicate(self):
+        first = self.run_event("Finished the billing import.\n")
+        second = self.run_event("Finished the billing import.\n")
+
+        self.assertEqual((first.returncode, first.stderr), (0, ""))
+        self.assertEqual((second.returncode, second.stderr), (0, ""))
+        self.assertEqual(self.spoken_lines(), ["builder finished in work."])
+        self.assertEqual(
+            self.actions(),
+            ["announced+summary-template+speak-command", "skipped-duplicate"],
+        )
+
+    def test_concurrent_same_content_announces_once(self):
+        self.transcript_path.write_text(
+            "Finished the billing import.\n", encoding="utf-8"
+        )
+        environment = self.event_environment()
+        environment["ANNOUNCER_TEST_SPEAKER_DELAY"] = "0.25"
+        first = subprocess.Popen(
+            self.announce_command(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+        )
+        time.sleep(0.05)
+        second = subprocess.Popen(
+            self.announce_command(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+        )
+
+        first_stdout, first_stderr = first.communicate(timeout=10)
+        second_stdout, second_stderr = second.communicate(timeout=10)
+
+        self.assertEqual((first.returncode, first_stdout, first_stderr), (0, "", ""))
+        self.assertEqual(
+            (second.returncode, second_stdout, second_stderr), (0, "", "")
+        )
+        self.assertEqual(self.spoken_lines(), ["builder finished in work."])
+        self.assertCountEqual(
+            self.actions(),
+            ["announced+summary-template+speak-command", "skipped-duplicate"],
+        )
+
+    def test_changed_content_announces_again(self):
+        first = self.run_event("Finished the billing import.\n")
+        second = self.run_event("Finished the owner export.\n")
+
+        self.assertEqual((first.returncode, second.returncode), (0, 0))
+        self.assertEqual(
+            self.spoken_lines(),
+            ["builder finished in work.", "builder finished in work."],
+        )
+        self.assertEqual(
+            self.actions(),
+            [
+                "announced+summary-template+speak-command",
+                "announced+summary-template+speak-command",
+            ],
+        )
+
+    def test_volatile_codex_footer_changes_are_still_duplicates(self):
+        response = "Finished the billing import.\n\n› Write tests for @filename\n\n"
+        first = self.run_event(
+            response
+            + "• Waiting for tests (22s • esc to interrupt)\n"
+            + "  gpt-5.6-sol · high · Fast off · ~/work · "
+            "Context 41% used · weekly 97% left · Main [default]\n"
+        )
+        second = self.run_event(
+            response
+            + "• Waiting for tests (47m 10s • esc to interrupt)\n"
+            + "  gpt-5.6-sol · high · Fast off · ~/work · "
+            "Context 24% used · weekly 96% left · Main [default]\n"
+        )
+
+        self.assertEqual((first.returncode, second.returncode), (0, 0))
+        self.assertEqual(self.spoken_lines(), ["builder finished in work."])
+        self.assertEqual(
+            self.actions(),
+            ["announced+summary-template+speak-command", "skipped-duplicate"],
+        )
+
+    def test_first_event_announces_and_persists_its_fingerprint(self):
+        result = self.run_event("Finished the billing import.\n")
+
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(self.spoken_lines(), ["builder finished in work."])
+        state = announce.load_content_fingerprints(
+            self.state_dir / announce.FINGERPRINT_STATE_FILE
+        )
+        self.assertEqual(set(state), {"p1"})
+        self.assertRegex(state["p1"], r"^[0-9a-f]{64}$")
+
+    def test_fingerprints_for_closed_panes_are_pruned(self):
+        self.state_dir.mkdir()
+        (self.state_dir / announce.FINGERPRINT_STATE_FILE).write_text(
+            json.dumps({"closed-pane": "a" * 64}) + "\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_event("Finished the billing import.\n")
+
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        state = announce.load_content_fingerprints(
+            self.state_dir / announce.FINGERPRINT_STATE_FILE
+        )
+        self.assertEqual(set(state), {"p1"})
+
+    def test_duplicate_event_also_prunes_closed_panes(self):
+        transcript = "Finished the billing import.\n"
+        self.state_dir.mkdir()
+        (self.state_dir / announce.FINGERPRINT_STATE_FILE).write_text(
+            json.dumps(
+                {
+                    "closed-pane": "a" * 64,
+                    "p1": announce.content_fingerprint(
+                        announce.summary_transcript(transcript)
+                    ),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_event(transcript)
+
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(self.actions(), ["skipped-duplicate"])
+        state = announce.load_content_fingerprints(
+            self.state_dir / announce.FINGERPRINT_STATE_FILE
+        )
+        self.assertEqual(set(state), {"p1"})
+
+    def test_blocked_events_keep_their_existing_announcement_behavior(self):
+        first = self.run_event("Waiting for approval.\n", status="blocked")
+        second = self.run_event("Waiting for approval.\n", status="blocked")
+
+        self.assertEqual((first.returncode, second.returncode), (0, 0))
+        self.assertEqual(
+            self.spoken_lines(),
+            [
+                "builder needs your input in work.",
+                "builder needs your input in work.",
+            ],
+        )
+        self.assertEqual(
+            self.actions(),
+            [
+                "announced+summary-template+speak-command",
+                "announced+summary-template+speak-command",
+            ],
+        )
 
 
 if __name__ == "__main__":

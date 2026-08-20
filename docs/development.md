@@ -9,6 +9,7 @@ announcer/
   dashboard.py    live status TUI and dashboard command routing
   config.py       defaults, TOML loading (tomllib, tiny-TOML fallback on 3.9)
   config_io.py    compatibility-safe config editing for noninteractive UIs
+  fingerprints.py persisted per-pane announcement content and delivery lock
   herdr.py        Herdr CLI client, event parsing
   log.py          invocation log writing and tail parsing
   paths.py        config/state directory resolution outside Herdr

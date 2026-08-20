@@ -11,6 +11,35 @@ import announce
 from announcer import summarize
 
 
+class SummaryTranscriptTests(unittest.TestCase):
+    def test_codex_chrome_is_removed_without_removing_response_text(self):
+        raw = "\n".join(
+            (
+                "Finished the billing import.",
+                "⚠ Heads up, less than 25% of your weekly limit remains.",
+                "• Waiting for tests (47m 10s • esc to interrupt)",
+                "› Write tests for @filename",
+                "  gpt-5.6-sol · high · Fast off · ~/work · "
+                "Context 24% used · weekly 96% left · Main [default]",
+                "",
+            )
+        )
+
+        result = summarize.summary_transcript(raw)
+
+        self.assertEqual(
+            result,
+            "\n".join(
+                (
+                    "Finished the billing import.",
+                    "⚠ Heads up, less than 25% of your weekly limit remains.",
+                    "• Waiting for tests (<elapsed> • esc to interrupt)",
+                    "› Write tests for @filename",
+                )
+            ),
+        )
+
+
 class SummaryReasonTests(unittest.TestCase):
     def config(self):
         config = dict(announce.DEFAULTS)
