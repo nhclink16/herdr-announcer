@@ -165,7 +165,7 @@ sanitized to plain words before any `speak_command` sees them.
 
 ## Requirements & limitations
 
-- Herdr ≥ 0.8.0, macOS or Linux, and a stable Rust toolchain for installation.
+- Herdr ≥ 0.8.0, macOS or Linux, and Rust ≥ 1.88 for installation.
   Linux local TTS wants
   `espeak-ng`, `espeak`, or `spd-say` ([one caveat](docs/configuration.md#voices));
   macOS needs nothing.
