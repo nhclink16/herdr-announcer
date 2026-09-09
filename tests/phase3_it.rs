@@ -84,11 +84,11 @@ case "$STUB_MODE" in
     echo '{"type":"turn.failed"}'
     ;;
   noactivity)
-    sleep 1
+    sleep 3
     ;;
   slow)
     echo '{"type":"item.started","item":{"type":"reasoning"}}'
-    sleep 1
+    sleep 3
     ;;
 esac
 "#,
@@ -101,7 +101,10 @@ esac
     let config_dir = temp.path().join("config");
     let config = load_test_config(
         &config_dir,
-        "summary_first_activity_timeout_seconds = 0.15\ncodex_timeout_seconds = 0.15\n",
+        // Generous margins: the assertions are about ordering (first activity
+        // arms the completion window), not speed, and a loaded machine can take
+        // hundreds of milliseconds to spawn the stub.
+        "summary_first_activity_timeout_seconds = 1.0\ncodex_timeout_seconds = 1.0\n",
     );
 
     for (mode, expected, reason) in [
