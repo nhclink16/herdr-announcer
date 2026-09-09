@@ -2,6 +2,7 @@
 name = "herdr-announcer"
 version = "1.0.1"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
 description = "Speaks a short summary when an agent finishes or needs input"
 

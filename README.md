@@ -27,7 +27,7 @@ downgrade logic left untouched."*
 
 ## Install
 
-Herdr 0.8.0 or newer and a stable Rust toolchain with `cargo` are required.
+Herdr 0.8.0 or newer and Rust 1.88 or newer with `cargo` are required.
 The plugin's `[[build]]` entry runs `cargo build --release` during install:
 
 ```bash
