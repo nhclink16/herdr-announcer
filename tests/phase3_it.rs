@@ -240,7 +240,14 @@ fn elevenlabs_mp3_reaches_player_and_no_player_skips_http_entirely() {
     );
 
     fs::remove_file(tools.join("mpv")).unwrap();
+    // Local TTS differs per platform: macOS uses `say`, Linux probes espeak-ng.
     executable(&tools.join("espeak-ng"), "#!/bin/sh\n/bin/cat >/dev/null\n");
+    executable(&tools.join("say"), "#!/bin/sh\n/bin/cat >/dev/null\n");
+    let local_backend = if cfg!(target_os = "macos") {
+        "say"
+    } else {
+        "espeak-ng"
+    };
     let unpaid = TcpListener::bind("127.0.0.1:0").unwrap();
     unpaid.set_nonblocking(true).unwrap();
     let unpaid_base = format!("http://{}", unpaid.local_addr().unwrap());
@@ -255,7 +262,7 @@ fn elevenlabs_mp3_reaches_player_and_no_player_skips_http_entirely() {
     reasons.clear();
     assert_eq!(
         speak(&config, "hello", &state_dir, &mut reasons).unwrap(),
-        "espeak-ng"
+        local_backend
     );
     assert!(
         matches!(unpaid.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)

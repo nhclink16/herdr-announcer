@@ -3,7 +3,7 @@ use herdr_announcer::config_write::write_config_keys;
 use herdr_announcer::summarize::ANNOUNCEMENT_PROMPT;
 use herdr_announcer::tui::widgets::{LinePrompter, PromptError, PromptUi};
 use herdr_announcer::tui::wizard::{
-    claude_summary_command, config_lines, preview_line, run_with_line_io, run_with_ui,
+    claude_summary_command, config_lines, preview_line, run_with_line_io_opts, run_with_ui_opts,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -27,12 +27,13 @@ fn caps(codex: bool, claude: bool) -> BTreeMap<String, bool> {
 }
 
 fn run(root: &Path, input: &str, detected: &BTreeMap<String, bool>) -> (u8, String) {
-    let (result, _, output) = run_with_line_io(
+    let (result, _, output) = run_with_line_io_opts(
         Cursor::new(input.as_bytes().to_vec()),
         Vec::new(),
         &root.join("config"),
         &root.join("state"),
         detected,
+        false,
     );
     (
         result.unwrap(),
@@ -367,11 +368,12 @@ fn abort_keeps_a_newer_concurrent_config_change() {
         inner: LinePrompter::new(Cursor::new(b"\n\n\n\n\n\n".to_vec()), Vec::new(), false),
         config_dir: config_dir.clone(),
     };
-    let code = run_with_ui(
+    let code = run_with_ui_opts(
         &mut ui,
         &config_dir,
         &temp.path().join("state"),
         &caps(true, false),
+        false,
     )
     .unwrap();
     assert_eq!(code, 130);

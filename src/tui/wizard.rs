@@ -112,6 +112,7 @@ fn run_wizard_flow(
     state_dir: &Path,
     boundary: &mut Option<SetupWriteBoundary>,
     detected: &BTreeMap<String, bool>,
+    ask_macos_voice: bool,
 ) -> Result<u8, PromptError> {
     let config_path = config_dir.join("config.toml");
     let existed = config_path.exists();
@@ -302,7 +303,7 @@ fn run_wizard_flow(
             config.set("elevenlabs_api_key", json!(""));
             add_chosen(&mut chosen, "speak_command");
             add_chosen(&mut chosen, "elevenlabs_api_key");
-            if cfg!(target_os = "macos") {
+            if ask_macos_voice {
                 let (voice, explicit) = ui.text(
                     "macOS voice name (blank = system voice)",
                     config.string("voice").unwrap_or_default(),
@@ -468,8 +469,33 @@ pub fn run_with_ui(
     state_dir: &Path,
     detected: &BTreeMap<String, bool>,
 ) -> Result<u8, PromptError> {
+    run_with_ui_opts(
+        ui,
+        config_dir,
+        state_dir,
+        detected,
+        cfg!(target_os = "macos"),
+    )
+}
+
+/// `ask_macos_voice` controls the Darwin-only "macOS voice name" question so
+/// callers (tests) can pin one flow on every platform.
+pub fn run_with_ui_opts(
+    ui: &mut dyn PromptUi,
+    config_dir: &Path,
+    state_dir: &Path,
+    detected: &BTreeMap<String, bool>,
+    ask_macos_voice: bool,
+) -> Result<u8, PromptError> {
     let mut boundary = None;
-    match run_wizard_flow(ui, config_dir, state_dir, &mut boundary, detected) {
+    match run_wizard_flow(
+        ui,
+        config_dir,
+        state_dir,
+        &mut boundary,
+        detected,
+        ask_macos_voice,
+    ) {
         Ok(code) => Ok(code),
         Err(PromptError::Abort) => {
             let outcome = if let Some(boundary) = &boundary {
@@ -513,8 +539,26 @@ pub fn run_with_line_io<R: io::BufRead, W: io::Write>(
     state_dir: &Path,
     detected: &BTreeMap<String, bool>,
 ) -> (Result<u8, PromptError>, R, W) {
+    run_with_line_io_opts(
+        input,
+        output,
+        config_dir,
+        state_dir,
+        detected,
+        cfg!(target_os = "macos"),
+    )
+}
+
+pub fn run_with_line_io_opts<R: io::BufRead, W: io::Write>(
+    input: R,
+    output: W,
+    config_dir: &Path,
+    state_dir: &Path,
+    detected: &BTreeMap<String, bool>,
+    ask_macos_voice: bool,
+) -> (Result<u8, PromptError>, R, W) {
     let mut ui = LinePrompter::new(input, output, false);
-    let result = run_with_ui(&mut ui, config_dir, state_dir, detected);
+    let result = run_with_ui_opts(&mut ui, config_dir, state_dir, detected, ask_macos_voice);
     let (input, output) = ui.into_parts();
     (result, input, output)
 }
