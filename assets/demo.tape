@@ -11,7 +11,7 @@ Type "export HERDR_PLUGIN_CONFIG_DIR=$(mktemp -d) HERDR_PLUGIN_STATE_DIR=$(mktem
 Enter
 Show
 
-Type "python3 announce.py setup"
+Type "target/release/herdr-announcer setup"
 Enter
 Sleep 1.5s
 

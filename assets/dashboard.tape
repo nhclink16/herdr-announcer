@@ -22,7 +22,7 @@ Type `clear`
 Enter
 Show
 
-Type `python3 dashboard.py`
+Type `target/release/herdr-announcer dashboard`
 Enter
 Sleep 2s
 

@@ -24,10 +24,10 @@ Type `clear`
 Enter
 Show
 
-Type `python3 announce.py --test`
+Type `target/release/herdr-announcer --test`
 Enter
 Sleep 1.5s
 
-Type `python3 announce.py status`
+Type `target/release/herdr-announcer status`
 Enter
 Sleep 5s
