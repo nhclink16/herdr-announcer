@@ -1,6 +1,6 @@
 [package]
 name = "herdr-announcer"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 license = "MIT"
 description = "Speaks a short summary when an agent finishes or needs input"

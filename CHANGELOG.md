@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1] - 2026-09-09
+
+### Fixed
+
+- Ship the `tests/fixtures/dirs/state/announcer.log` fixture that a blanket
+  `*.log` ignore rule kept out of the repository, so the status and snapshot
+  golden tests pass from a fresh clone and in CI.
+
 ## [1.0.0] - 2026-09-09
 
 ### Added
