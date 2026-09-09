@@ -56,6 +56,15 @@ else
   printf '%s\n' 'route-speak: no local say, espeak-ng, spd-say, or espeak found' >&2
 fi
 
+# Headless servers (no speakers) can name a primary desk to speak at when
+# nobody is detected as present, instead of losing the announcement:
+#
+#   FALLBACK_HOST="imac|100.123.220.38|macos"
+#
+# Same alias|ip|backend shape as HOSTS. Leave empty to keep the presence-only
+# behaviour (fall back to this machine's own voice).
+FALLBACK_HOST=""
+
 SSH_PORT=22
 
 if nc -h 2>&1 | grep -q -- '-G'; then
@@ -74,6 +83,22 @@ local_speak() {
   else
     printf '%s\n' "$text" | "$LOCAL_SPEAK"
   fi
+}
+
+# Nobody present: try the fallback desk if configured and alive, else speak here.
+fallback_speak() {
+  if [ -n "$FALLBACK_HOST" ]; then
+    _fa=${FALLBACK_HOST%%|*}
+    _frest=${FALLBACK_HOST#*|}
+    _fip=${_frest%%|*}
+    _fb=${_frest#*|}
+    if reachable "$_fip" && speak_on "$_fa" "$_fb"; then
+      return 0
+    fi
+  fi
+  local_speak && return 0
+  printf 'route-speak: nobody present, no reachable fallback host, no local voice\n' >&2
+  return 1
 }
 
 ssh_with_opts() {
@@ -175,7 +200,7 @@ attached=$(
 )
 
 if [ -z "$attached" ]; then
-  local_speak
+  fallback_speak
   exit $?
 fi
 
@@ -201,5 +226,5 @@ for _p in $_pids; do
   wait "$_p" && _spoke=1
 done
 
-# Nobody accepted it — say it here rather than lose it.
-[ "$_spoke" = 1 ] || local_speak
+# Nobody accepted it — fall back rather than lose it.
+[ "$_spoke" = 1 ] || fallback_speak

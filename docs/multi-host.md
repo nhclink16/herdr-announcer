@@ -39,6 +39,20 @@ laptop|10.0.0.6|macos
 Backends are `macos`, `windows`, `linux`, or `cmd:<anything reading stdin>`
 (`cmd:ntfy publish mytopic` works fine).
 
+## Headless servers
+
+A build box or a Raspberry Pi running its own Herdr server has no speakers,
+so "nobody is attached, speak locally" means the announcement is lost. Name
+the desk that should hear it instead:
+
+```sh
+FALLBACK_HOST="imac|100.123.220.38|macos"
+```
+
+When presence detection finds nobody, the script speaks at that host if its
+SSH port answers, and only then gives up with a logged error. Presence still
+wins when it can be detected, so the announcement follows you as before.
+
 ## Why the script is shaped the way it is
 
 **Detected is not reachable.** A sleeping or powered-off machine leaves its
