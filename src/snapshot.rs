@@ -358,7 +358,11 @@ mod tests {
         // rstrip() to its joined rows, so the final blank message row is not
         // represented in the byte stream.
         assert_eq!(output.lines().count() + 1, FRAME_HEIGHT);
-        assert!(output.find("newer").unwrap() < output.find("older").unwrap());
+        // Match whole log rows: the config-path row above them can contain
+        // arbitrary substrings (macOS temp dirs live under /var/folders).
+        let newer_row = output.find("blocked   pane-2").unwrap();
+        let older_row = output.find("done      pane-1").unwrap();
+        assert!(newer_row < older_row, "newest log row must render first");
         assert!(!output.contains("Muted"));
         assert!(output.ends_with('\n'));
     }

@@ -638,7 +638,7 @@ impl Dashboard {
                 .lines()
                 .rfind(|line| !line.trim().is_empty())
                 .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("exit {}", status.code().map_or(-1, |code| code)));
+                .unwrap_or_else(|| format!("exit {}", status.code().unwrap_or(-1)));
             self.set_message(format!("voice test failed: {}", clip(detail, 60)));
         }
         self.voice_test = None;
